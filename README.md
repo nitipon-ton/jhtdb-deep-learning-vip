@@ -1,4 +1,4 @@
-# JHTDB-ML
+# JHTDB-DEEP-LEARNING
 
 Adapted from and built on top of the excellent [pyJHTDB](https://github.com/idies/pyJHTDB) project. This repository adds a practical workflow for fetching channel-flow planes from the Johns Hopkins Turbulence Database (JHTDB) and for experimenting with data-driven and machine learning models like super-resolution models on the resulting datasets. Maintained by [Aditya Sai Pranith Ayapilla](https://sites.google.com/view/adityasaipranithayapilla/home). For more information on the Johns Hopkins turbulence database, please check https://turbulence.idies.jhu.edu/database.
 

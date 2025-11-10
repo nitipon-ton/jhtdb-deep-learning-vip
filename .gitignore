@@ -59,8 +59,11 @@ venv.bak/
 ._*
 
 # Data files (large)
-data/
+data/*
+data/**/*
 !data/.gitkeep
+!data/*/.gitkeep
+!data/**/.gitkeep
 *.h5
 *.hdf5
 *.nc
@@ -70,14 +73,18 @@ data/
 *.pickle
 
 # Saved models
-saved_models/
+saved_models/*
+saved_models/**/*
 !saved_models/.gitkeep
 !saved_models/*/.gitkeep
+!saved_models/**/.gitkeep
 
 # Working directories
-work/
+work/*
+work/**/*
 !work/.gitkeep
 !work/*/.gitkeep
+!work/**/.gitkeep
 
 # JHTDB output
 giverny_output/
