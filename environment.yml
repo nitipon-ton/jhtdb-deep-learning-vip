@@ -1,0 +1,32 @@
+name: jhtdb-ml
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy=1.23.*
+  - scipy
+  - pandas
+  - h5py
+  - xarray
+  - matplotlib
+  - jupyter
+  - jupyterlab
+  - notebook
+  - pip
+  - pip:
+      - givernylocal
+      - plotly
+      - torch
+      - torchvision
+      - torchaudio
+      - torchinfo
+      - pytorch-lightning
+      - einops
+      - tqdm
+      - ipywidgets
+      - kornia
+      - albumentations
+      - tensorboard
+      - timm
+      - pyyaml

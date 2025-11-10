@@ -1,0 +1,123 @@
+# =============================================================================
+# Super-Resolution: Hybrid DSC/MS U-Net for Turbulence (64→256)
+# =============================================================================
+
+experiment:
+  name: "sr_hdsc_ms"
+  description: "Hybrid DSC/MS U-Net (Fukami et al.) for turbulent flow SR"
+  author: "Aditya Sai Pranith Ayapilla"
+
+# =============================================================================
+# DATA CONFIGURATION
+# =============================================================================
+data:
+  h5_path: "data/raw/channel_sr/channel_sr_256.h5"
+
+  split:
+    train_snapshots: 800
+    val_snapshots: 150
+    test_snapshots: 49
+
+  component: "omega_z"
+
+  normalization:
+    method: "global"
+
+  lr_maker:
+    method: "avgpool"
+    scale: 4
+
+  temporal:
+    enabled: false
+    num_frames: 3
+    frame_spacing: 1
+
+  augmentation:
+    enabled: true
+    cyclic_shift: true
+    rot180: true
+    flipx: true
+    flipy: true
+    rot90: false
+    noise:
+      enabled: false
+      std: 0.01
+    sign_maps:
+      ux: {flipx: -1, flipy: 1}
+      uy: {flipx: 1, flipy: -1}
+      uz: {flipx: 1, flipy: 1}
+      omega_z: {flipx: -1, flipy: -1}
+
+# =============================================================================
+# MODEL ARCHITECTURE - Hybrid DSC/MS
+# =============================================================================
+model:
+  architecture: "hdsc_ms"
+  scale_factor: 4
+
+  hdsc_ms:
+    in_ch: 1
+    out_ch: 1
+    dsc_width: 64            # DSC branch width
+    ms_mid: 32               # Multi-scale mid channels
+    ms_small: 16              # Multi-scale small channels
+    activation: "relu"
+
+# =============================================================================
+# TRAINING (same as baseline)
+# =============================================================================
+training:
+  epochs: 120
+  batch_size: 8
+  num_workers: 0
+  optimizer: "adamw"
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  lr_scheduler:
+    enabled: true
+    type: "cosine"
+    warmup_epochs: 5
+    min_lr: 1.0e-6
+  mixed_precision: true
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+  early_stopping:
+    enabled: true
+    patience: 20
+    metric: "val_loss"
+    mode: "min"
+
+# =============================================================================
+# LOSS FUNCTIONS
+# =============================================================================
+loss:
+  components:
+    pixel:
+      enabled: true
+      weight: 1.0
+      type: "l2"
+    gradient:
+      enabled: false
+      weight: 0.2
+    spectral:
+      enabled: false
+      weight: 0.1
+      num_bins: 20
+      log_bins: true
+
+# =============================================================================
+# EVALUATION
+# =============================================================================
+evaluation:
+  compute_psnr: true
+  compute_ssim: true
+  turbulence_metrics:
+    enabled: true
+    energy_spectrum: true
+    enstrophy: true
+    two_point_correlation: true
+
+hardware:
+  device: "cuda"  # Use GPU (was "mps" for Apple Silicon)

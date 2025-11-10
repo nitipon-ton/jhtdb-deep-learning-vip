@@ -1,0 +1,176 @@
+# =============================================================================
+# Super-Resolution: EDSR (Enhanced Deep SR) for Isotropic Turbulence
+# =============================================================================
+# EDSR (Lim et al. 2017) - Winner of NTIRE2017 SR Challenge
+#
+# Key features:
+# - NO BatchNorm (improves SR quality by preserving range flexibility)
+# - Deep residual learning (16-32 blocks)
+# - PixelShuffle for learned upsampling
+# - Global residual connection (adds bicubic baseline)
+#
+# This is a proven architecture for natural images - let's test on turbulence!
+# =============================================================================
+
+experiment:
+  name: "sr_edsr_isotropic"
+  description: "EDSR baseline for isotropic turbulence SR (128→512)"
+  author: "Aditya Sai Pranith Ayapilla"
+
+# =============================================================================
+# DATA CONFIGURATION
+# =============================================================================
+data:
+  h5_path: "data/raw/isotropic_xy_512/isotropic_xy_512.h5"
+
+  split:
+    train_snapshots: 800
+    val_snapshots: 150
+    test_snapshots: 49
+
+  component: "omega_z"
+
+  normalization:
+    method: "global"
+
+  lr_maker:
+    method: "avgpool"
+    scale: 4               # 512/4 = 128
+
+  temporal:
+    enabled: false
+
+  augmentation:
+    enabled: false
+    cyclic_shift: true
+    rot180: true
+    flipx: true
+    flipy: true
+    rot90: false
+    sign_maps:
+      omega_z: {flipx: -1, flipy: -1}
+
+# =============================================================================
+# DOMAIN INFORMATION
+# =============================================================================
+domain:
+  dataset: "isotropic1024coarse"
+  dns_info:
+    effective_resolution:
+      dx: 0.006136
+      dy: 0.006136
+      dz: 0.006136
+
+# =============================================================================
+# MODEL ARCHITECTURE - EDSR
+# =============================================================================
+model:
+  architecture: "edsr"
+  scale_factor: 4
+
+  edsr:
+    n_resblocks: 16        # Number of residual blocks (16=standard, 32=EDSR+)
+    n_feats: 64            # Feature channels (64=standard, 256=EDSR+)
+    res_scale: 1.0         # Residual scaling (1.0 for shallow, 0.1 for deep)
+    in_channels: 1
+    out_channels: 1
+
+# =============================================================================
+# TRAINING
+# =============================================================================
+training:
+  epochs: 100
+  batch_size: 16           # Adjust based on memory
+  num_workers: 0
+  optimizer: "adam"        # EDSR paper uses Adam
+  lr: 1.0e-4
+  weight_decay: 0.0        # EDSR doesn't use weight decay
+  betas: [0.9, 0.999]
+
+  lr_scheduler:
+    enabled: true
+    type: "step"           # EDSR uses step decay
+    step_size: 80          # Decay every 80 epochs
+    gamma: 0.5             # Multiply LR by 0.5
+
+  mixed_precision: false
+
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+
+  early_stopping:
+    enabled: true
+    patience: 40
+    metric: "val_loss"
+    mode: "min"
+
+# =============================================================================
+# LOSS FUNCTIONS
+# =============================================================================
+loss:
+  components:
+    pixel:
+      enabled: true
+      weight: 1.0
+      type: "l1"           # EDSR uses L1 loss (better for SR than L2)
+
+    gradient:
+      enabled: false
+
+    spectral:
+      enabled: false
+
+    physics:
+      enabled: false       # Start without physics, add later if needed
+
+# =============================================================================
+# EVALUATION
+# =============================================================================
+evaluation:
+  compute_psnr: true
+  compute_ssim: true
+  turbulence_metrics:
+    enabled: true
+    energy_spectrum: true
+    enstrophy: true
+    two_point_correlation: true
+    vorticity_statistics: true
+
+hardware:
+  device: "cuda"  # Use GPU (was "mps" for Apple Silicon)
+
+# =============================================================================
+# NOTES
+# =============================================================================
+# EDSR Variants:
+#
+# 1. EDSR-Baseline (this config):
+#    - n_resblocks: 16
+#    - n_feats: 64
+#    - Params: ~1.5M
+#    - Fast, good baseline
+#
+# 2. EDSR+ (high capacity):
+#    - n_resblocks: 32
+#    - n_feats: 256
+#    - Params: ~43M
+#    - Slower, best quality
+#
+# 3. EDSR-Lite (fast experiments):
+#    - n_resblocks: 8
+#    - n_feats: 32
+#    - Params: ~370k
+#    - Quick testing
+#
+# Expected performance:
+#   - EDSR should beat bicubic by 2-4 dB PSNR
+#   - Sharper vortical structures
+#   - Better spectral accuracy
+#
+# Training tips:
+#   - L1 loss is better than L2 for SR (less blur)
+#   - No BatchNorm preserves full dynamic range
+#   - Global residual helps convergence
+#   - Step LR decay works well (halve every 80 epochs)
+# =============================================================================

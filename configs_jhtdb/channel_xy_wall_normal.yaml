@@ -1,0 +1,115 @@
+# =============================================================================
+# JHTDB Data Fetching Configuration: Channel Flow - X-Y Wall-Normal Plane
+# =============================================================================
+# This configuration fetches a wall-normal (x-y) plane from the JHTDB channel
+# flow dataset at a specified spanwise (z) location.
+#
+# Dataset: channel
+# Domain: 8π × 2 × 3π (streamwise × wall-normal × spanwise)
+# Grid: 2048 × 512 × 1536
+# Resolution matched to DNS by limiting domain extent
+#
+# Use case: Cross-stream structures, wall-normal velocity distributions
+# =============================================================================
+
+experiment:
+  name: "channel_xy_wall_normal"
+  description: "Channel flow wall-normal plane (x-y) at spanwise location z=π/2"
+  author: "Aditya Sai Pranith Ayapilla"
+
+# Dataset configuration
+dataset:
+  name: "channel"
+  variable: "velocity"
+
+# Plane configuration
+plane:
+  type: "wall_normal"                # wall_parallel or wall_normal
+  orientation: "xy"                  # xz, xy, or yz
+  fixed_coordinate:
+    name: "z"                        # Fixed coordinate (z for x-y plane)
+    value: 4.71238898038469          # π*1.5 (middle of spanwise domain)
+    description: "Spanwise midplane"
+
+# Spatial domain
+domain:
+  x:
+    min: 0.0
+    max: 6.283185307179586           # 2π (matched to DNS resolution)
+    description: "Streamwise extent (1/4 of full domain for DNS resolution)"
+  y:
+    min: -1.0
+    max: 1.0                         # Full channel height (wall to wall, centered)
+    description: "Wall-normal extent (-1 = bottom wall, 0 = centerline, +1 = top wall)"
+
+  # Grid resolution
+  grid_size: 512                     # Number of points in each direction
+
+  # DNS resolution matching
+  dns_info:
+    full_domain: "8π × 2 × 3π (y centered at 0)"
+    full_grid: "2048 × 512 × 1536"
+    domain_fraction_x: 0.25          # Using 1/4 of streamwise domain
+    domain_fraction_y: 1.0           # Using FULL wall-normal domain
+    effective_resolution:
+      dx: 0.012272                   # Matches DNS dx
+      dy: 0.00390625                 # Matches DNS dy (512 points over y=2.0)
+
+# Temporal configuration
+temporal:
+  num_snapshots: 500
+  time_start: 0.0
+  time_end: 13.0
+  description: "First batch of 500 snapshots"
+
+# Interpolation settings
+interpolation:
+  temporal_method: "none"
+  spatial_method: "lag4"
+  spatial_operator: "field"
+
+# Output configuration
+output:
+  base_dir: "data/raw"
+  experiment_dir: "channel_xy_512"   # Different directory
+  visualization_dir: "visualizations"
+
+  file_formats:
+    snapshots: "npz"
+    combined: "h5"
+
+  h5_filename: "channel_xy_512.h5"
+
+# Visualization settings
+visualization:
+  snapshot_frequency: 10
+
+  colormaps:
+    velocity: "magma"
+    vorticity: "seismic"
+
+  figure_settings:
+    dpi: 150
+    format: "png"
+
+# API token configuration
+api:
+  token_env_var: "JHTDB_MY_TOKEN"
+  fallback_token: "JHTDB_API_TOKEN"
+  cache_dir: "data/giverny_cache"
+
+# Computational settings
+computation:
+  vorticity:
+    enabled: true
+    components: ["omega_z"]          # z-component for x-y plane
+
+# Metadata
+metadata:
+  created: "2025-11-04"
+  version: "1.0"
+  notes: |
+    This configuration fetches wall-normal (x-y) channel flow data. The plane
+    cuts through the spanwise direction at z=1.5π (middle of domain). This is
+    useful for studying cross-stream structures and wall-normal velocity
+    distributions. Domain extent is matched to DNS resolution.

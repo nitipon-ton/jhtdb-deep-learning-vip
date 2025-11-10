@@ -1,0 +1,159 @@
+# =============================================================================
+# Super-Resolution: U-Net with Physics-Informed Losses (128→512)
+# =============================================================================
+
+experiment:
+  name: "sr_unet_physics"
+  description: "U-Net with physics-informed losses (advection + diffusion) for isotropic turbulence SR"
+  author: "Aditya Sai Pranith Ayapilla"
+
+# =============================================================================
+# DATA CONFIGURATION
+# =============================================================================
+data:
+  h5_path: "data/raw/isotropic_xy_512/isotropic_xy_512.h5"
+
+  # Snapshot-wise split (avoid temporal leakage)
+  split:
+    train_snapshots: 800
+    val_snapshots: 150
+    test_snapshots: 49
+
+  # Component to super-resolve
+  component: "omega_z"       # Options: "ux", "uy", "uz", "omega_z"
+
+  # Normalization
+  normalization:
+    method: "global"         # "global" (z-score over train set) or "per_snapshot"
+
+  # LR creation (downsample HR → LR)
+  lr_maker:
+    method: "avgpool"        # Average pooling (anti-alias)
+    scale: 4                 # Downsample factor: 512/4 = 128
+
+  # Temporal stacking (MTPC)
+  temporal:
+    enabled: false           # Set to true for temporal stacking
+    num_frames: 3            # Stack N past frames (1, 3, or 5)
+    frame_spacing: 1         # Spacing between frames (dt)
+
+  # Physics-aware augmentations
+  augmentation:
+    enabled: false
+
+    # Geometric transformations (same for LR and HR)
+    cyclic_shift: true       # Random cyclic shifts (periodic boundaries)
+    rot180: true             # 180-degree rotation
+    flipx: true              # Horizontal flip (with sign maps)
+    flipy: true              # Vertical flip (with sign maps)
+    rot90: false             # Avoid for anisotropic flow
+
+    # Noise injection (optional robustness)
+    noise:
+      enabled: false
+      std: 0.01              # Gaussian noise std for LR input
+
+    # Sign maps for velocity components (apply during flips)
+    sign_maps:
+      ux: {flipx: -1, flipy: 1}   # u → -u on x-flip, u → u on y-flip
+      uy: {flipx: 1, flipy: -1}   # v → v on x-flip, v → -v on y-flip
+      uz: {flipx: 1, flipy: 1}    # w → w (for 3D)
+      omega_z: {flipx: -1, flipy: -1}  # ω_z → -ω_z on both flips
+
+# =============================================================================
+# MODEL ARCHITECTURE
+# =============================================================================
+model:
+  architecture: "unet"
+  scale_factor: 4
+
+  unet:
+    in_ch: 1                 # Will be N*1 if temporal stacking enabled
+    out_ch: 1
+    base_ch: 24              # 24 → ~1.1M params (good for 4× SR)
+
+# =============================================================================
+# TRAINING HYPERPARAMETERS
+# =============================================================================
+training:
+  epochs: 120
+  batch_size: 32
+  num_workers: 0
+
+  optimizer: "adamw"
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+
+  lr_scheduler:
+    enabled: true
+    type: "cosine"           # Cosine decay
+    warmup_epochs: 5
+    min_lr: 1.0e-6
+
+  mixed_precision: true
+
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+
+  early_stopping:
+    enabled: true
+    patience: 20
+    metric: "val_loss"
+    mode: "min"
+
+# =============================================================================
+# LOSS FUNCTIONS
+# =============================================================================
+loss:
+  components:
+    pixel:
+      enabled: true
+      weight: 1.0
+      type: "l1"             # l1, l2, or smooth_l1
+
+    gradient:
+      enabled: false         # Disabled - causes training instability
+      weight: 0.5
+
+    spectral:
+      enabled: false         # Disabled - causes training instability
+      weight: 0.2
+      num_bins: 20
+      log_bins: true
+
+    # =========================================================================
+    # PHYSICS-INFORMED LOSSES (FIXED SCALING!)
+    # =========================================================================
+    physics:
+      enabled: true          # ← PHYSICS LOSSES ENABLED!
+      lambda_adv: 1.0e-14    # Weight for advection loss (u·∇ω) - REDUCED FROM 0.01!
+      lambda_diff: 1.0e-14   # Weight for diffusion loss (∇²ω) - REDUCED FROM 0.01!
+      lambda_grad: 0.0       # Optional gradient regularization (disabled)
+
+      # NOTE: These tiny weights are necessary because physics losses
+      # compute spatial derivatives on 512×512 fields, which amplifies
+      # values by ~10^14 due to 1/dx² scaling in the Laplacian.
+      # The losses were originally 10^13-10^15 with lambda=0.01,
+      # completely destroying training. With lambda=1e-14, they should
+      # be comparable to pixel loss (~0.01-1.0 range).
+
+# =============================================================================
+# EVALUATION METRICS
+# =============================================================================
+evaluation:
+  compute_psnr: true
+  compute_ssim: true
+
+  turbulence_metrics:
+    enabled: true
+    energy_spectrum: true
+    enstrophy: true
+    two_point_correlation: true
+
+# =============================================================================
+# HARDWARE
+# =============================================================================
+hardware:
+  device: "cuda"  # Use GPU (was "mps" for Apple Silicon)              # "mps", "cuda", or "cpu"

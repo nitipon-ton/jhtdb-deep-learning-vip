@@ -1,0 +1,115 @@
+# =============================================================================
+# Super-Resolution: MLP Baseline (64→256)
+# =============================================================================
+
+experiment:
+  name: "sr_mlp_baseline"
+  description: "Fully-connected MLP baseline for SR (naive, no conv bias)"
+  author: "Aditya Sai Pranith Ayapilla"
+
+# =============================================================================
+# DATA CONFIGURATION (same as U-Net)
+# =============================================================================
+data:
+  h5_path: "data/raw/channel_sr/channel_sr_256.h5"
+  split:
+    train_snapshots: 700
+    val_snapshots: 150
+    test_snapshots: 149
+  component: "omega_z"
+  normalization:
+    method: "global"
+  lr_maker:
+    method: "avgpool"
+    scale: 4
+  temporal:
+    enabled: false
+    num_frames: 1
+    frame_spacing: 1
+  augmentation:
+    enabled: true
+    cyclic_shift: true
+    rot180: true
+    flipx: true
+    flipy: true
+    rot90: false
+    noise:
+      enabled: false
+      std: 0.01
+    sign_maps:
+      ux: {flipx: -1, flipy: 1}
+      uy: {flipx: 1, flipy: -1}
+      uz: {flipx: 1, flipy: 1}
+      omega_z: {flipx: -1, flipy: -1}
+
+# =============================================================================
+# MODEL ARCHITECTURE - MLP
+# =============================================================================
+model:
+  architecture: "mlp"
+  scale_factor: 4
+
+  mlp:
+    variant: "standard"      # "standard" or "tiny"
+    hidden_dims: [1024, 2048, 4096, 2048, 1024]  # For standard
+    dropout_p: 0.1
+    # For tiny variant:
+    # hidden_dim: 512
+    # num_layers: 3
+
+# =============================================================================
+# TRAINING (lighter due to memory constraints)
+# =============================================================================
+training:
+  epochs: 100              # Fewer epochs for MLP
+  batch_size: 4            # Smaller batch (MLP is memory-heavy)
+  num_workers: 0
+  optimizer: "adamw"
+  lr: 5.0e-5               # Lower LR for MLP
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  lr_scheduler:
+    enabled: true
+    type: "cosine"
+    warmup_epochs: 5
+    min_lr: 1.0e-6
+  mixed_precision: true
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+  early_stopping:
+    enabled: true
+    patience: 15
+    metric: "val_loss"
+    mode: "min"
+
+# =============================================================================
+# LOSS FUNCTIONS (pixel only for MLP)
+# =============================================================================
+loss:
+  components:
+    pixel:
+      enabled: true
+      weight: 1.0
+      type: "l2"
+    gradient:
+      enabled: false
+      weight: 0.0
+    spectral:
+      enabled: false
+      weight: 0.0
+
+# =============================================================================
+# EVALUATION
+# =============================================================================
+evaluation:
+  compute_psnr: true
+  compute_ssim: true
+  turbulence_metrics:
+    enabled: true
+    energy_spectrum: true
+    enstrophy: true
+    two_point_correlation: false  # Disable for MLP
+
+hardware:
+  device: "cuda"  # Use GPU (was "mps" for Apple Silicon)

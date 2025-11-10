@@ -1,0 +1,150 @@
+# =============================================================================
+# JHTDB Data Fetching Configuration: Forced Isotropic Turbulence - X-Y Plane
+# =============================================================================
+# This configuration fetches a 2D plane from the JHTDB forced homogeneous
+# isotropic turbulence dataset (isotropic1024coarse).
+#
+# Dataset: isotropic1024coarse
+# Domain: 2π × 2π × 2π (cubic, periodic in all directions)
+# Grid: 1024³
+# Time: 0 to 10.056 s (5028 timesteps, dt=0.0002)
+# Resolution matched to DNS by limiting domain extent
+#
+# Use case: Homogeneous turbulence, isotropy studies, fundamental turbulence
+# =============================================================================
+
+experiment:
+  name: "isotropic_xy_plane"
+  description: "Forced homogeneous isotropic turbulence in x-y plane with full DNS resolution"
+  author: "Aditya Sai Pranith Ayapilla"
+
+# Dataset configuration
+dataset:
+  name: "isotropic1024coarse"        # JHTDB dataset identifier
+  variable: "velocity"               # Field to query
+  description: |
+    Forced homogeneous isotropic turbulence at Re_λ ≈ 433
+    Statistically stationary, no mean flow, periodic boundaries
+
+# Plane configuration
+plane:
+  type: "arbitrary"                  # Plane type (arbitrary for isotropic)
+  orientation: "xy"                  # xz, xy, or yz (all equivalent for isotropic)
+  fixed_coordinate:
+    name: "z"                        # Fixed coordinate
+    value: 3.141592653589793         # π (middle of domain)
+    description: "Midplane (arbitrary for homogeneous flow)"
+
+# Spatial domain
+domain:
+  x:
+    min: 0.0
+    max: 3.141592653589793           # π (half of full domain for DNS resolution)
+    description: "X extent (1/2 of full domain for DNS resolution)"
+  y:
+    min: 0.0
+    max: 3.141592653589793           # π (half of full domain for DNS resolution)
+    description: "Y extent (1/2 of full domain for DNS resolution)"
+
+  # Grid resolution
+  grid_size: 512                     # Number of points in each direction
+
+  # DNS resolution matching
+  dns_info:
+    full_domain: "2π × 2π × 2π"
+    full_grid: "1024 × 1024 × 1024"
+    domain_fraction: 0.5             # Using 1/2 of domain in each direction
+    effective_resolution:
+      dx: 0.006136                   # 2π / 1024
+      dy: 0.006136                   # Matches DNS
+      dz: 0.006136                   # Isotropic
+
+# Temporal configuration
+temporal:
+  num_snapshots: 500                 # Number of snapshots to fetch
+  time_start: 5.0                    # Starting time [s]
+  time_end: 10.0                     # Ending time [s] (max is 10.056)
+  description: "First batch of 500 snapshots covering full time range"
+
+  # Dataset time information
+  dataset_info:
+    total_timesteps: 5028
+    dt: 0.0002                       # Time step size
+    time_range: [0.0, 10.056]        # Full available time range
+
+# Interpolation settings
+interpolation:
+  temporal_method: "none"            # Use stored timesteps
+  spatial_method: "lag4"             # 4th-order Lagrange interpolation
+  spatial_operator: "field"          # Field evaluation
+
+# Output configuration
+output:
+  base_dir: "data/raw"
+  experiment_dir: "isotropic_xy_512" # Subdirectory for this experiment
+  visualization_dir: "visualizations"
+
+  file_formats:
+    snapshots: "npz"                 # Individual snapshot format
+    combined: "h5"                   # Combined file format
+
+  h5_filename: "isotropic_xy_512.h5" # Name of combined HDF5 file
+
+# Visualization settings
+visualization:
+  snapshot_frequency: 10             # Display every N snapshots during fetch
+
+  colormaps:
+    velocity: "magma"              # Colormap for velocity components
+    vorticity: "seismic"             # Colormap for vorticity
+
+  figure_settings:
+    dpi: 150
+    format: "png"
+
+# API token configuration
+api:
+  token_env_var: "JHTDB_MY_TOKEN"    # Primary token (high capacity)
+  fallback_token: "JHTDB_API_TOKEN"  # Fallback token (standard)
+  cache_dir: "data/giverny_cache"    # Cache directory for givernylocal
+
+# Computational settings
+computation:
+  vorticity:
+    enabled: true                    # Compute vorticity from velocity
+    components: ["omega_z"]          # z-component for x-y plane
+
+# Turbulence statistics (for reference)
+turbulence:
+  reynolds_lambda: 433               # Taylor microscale Reynolds number
+  taylor_microscale: 0.035           # Taylor microscale λ
+  kolmogorov_scale: 0.003            # Kolmogorov scale η
+  integral_scale: 0.47               # Integral length scale L
+  urms: 0.68                         # RMS velocity
+  dissipation_rate: 0.093            # ε [m²/s³]
+  forcing: "large_scale"             # Forcing method
+  description: "Statistically stationary, forced at large scales"
+
+# Metadata
+metadata:
+  created: "2025-11-04"
+  version: "1.0"
+  notes: |
+    This configuration fetches forced homogeneous isotropic turbulence data
+    from the isotropic1024coarse dataset. The flow is statistically stationary,
+    periodic in all directions, and has no mean flow. The domain is reduced to
+    π × π (1/2 × 1/2 of the full 2π × 2π domain) to allow 512×512 grid to
+    match the DNS grid spacing exactly.
+
+    Key features:
+    - Homogeneous: Statistics independent of position
+    - Isotropic: Statistics independent of direction
+    - Statistically stationary: Time-averaged statistics constant
+    - Forced: Energy injected at large scales to maintain turbulence
+    - Periodic: All boundaries are periodic
+
+    Use cases:
+    - Fundamental turbulence studies
+    - Testing turbulence theories (Kolmogorov, etc.)
+    - ML model development without wall effects
+    - Energy cascade analysis

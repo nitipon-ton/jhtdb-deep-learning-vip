@@ -1,0 +1,115 @@
+# =============================================================================
+# JHTDB Data Fetching Configuration: Channel Flow - X-Z Wall-Parallel Plane
+# =============================================================================
+# This configuration fetches a wall-parallel (x-z) plane from the JHTDB channel
+# flow dataset at a specified wall-normal (y) location.
+#
+# Dataset: channel
+# Domain: 8π × 2 × 3π (streamwise × wall-normal × spanwise)
+# Grid: 2048 × 512 × 1536
+# Resolution matched to DNS by limiting domain extent
+#
+# Use case: Near-wall turbulence structures, streaks, vortices
+# =============================================================================
+
+experiment:
+  name: "channel_xz_wall_parallel"
+  description: "Channel flow wall-parallel plane at y=0.9 with full DNS resolution"
+  author: "Aditya Sai Pranith Ayapilla"
+
+# Dataset configuration
+dataset:
+  name: "channel"                    # JHTDB dataset identifier
+  variable: "velocity"               # Field to query (velocity, pressure, etc.)
+
+# Plane configuration
+plane:
+  type: "wall_parallel"              # wall_parallel, wall_normal
+  orientation: "xz"                  # xz, xy, or yz
+  fixed_coordinate:
+    name: "y"                        # Fixed coordinate (y for wall-parallel)
+    value: 0.9                       # Location in wall-normal direction
+    description: "Near-wall region"
+
+# Spatial domain
+domain:
+  x:
+    min: 0.0
+    max: 6.283185307179586         # 2π (matched to DNS resolution)
+    description: "Streamwise extent (1/4 of full domain for DNS resolution)"
+  z:
+    min: 0.0
+    max: 3.141592653589793         # π (matched to DNS resolution)
+    description: "Spanwise extent (1/3 of full domain for DNS resolution)"
+
+  # Grid resolution
+  grid_size: 512                     # Number of points in each direction
+
+  # DNS resolution matching
+  dns_info:
+    full_domain: "8π × 2 × 3π"
+    full_grid: "2048 × 512 × 1536"
+    domain_fraction_x: 0.25          # Using 1/4 of streamwise domain
+    domain_fraction_z: 0.333         # Using 1/3 of spanwise domain
+    effective_resolution:
+      dx: 0.012272                   # Matches DNS dx
+      dz: 0.006136                   # Matches DNS dz
+
+# Temporal configuration
+temporal:
+  num_snapshots: 500                 # Number of snapshots to fetch
+  time_start: 0.0                    # Starting time [s]
+  time_end: 13.0                     # Ending time [s]
+  description: "First batch of 500 snapshots"
+
+# Interpolation settings
+interpolation:
+  temporal_method: "none"            # Temporal interpolation method
+  spatial_method: "lag4"             # 4th-order Lagrange interpolation
+  spatial_operator: "field"          # Field evaluation (not gradient)
+
+# Output configuration
+output:
+  base_dir: "data/raw"
+  experiment_dir: "channel_sr_512"   # Subdirectory for this experiment
+  visualization_dir: "visualizations"
+
+  file_formats:
+    snapshots: "npz"                 # Individual snapshot format
+    combined: "h5"                   # Combined file format
+
+  h5_filename: "channel_sr_512.h5"   # Name of combined HDF5 file
+
+# Visualization settings
+visualization:
+  snapshot_frequency: 10             # Display every N snapshots during fetch
+
+  colormaps:
+    velocity: "magma"              # Colormap for velocity components
+    vorticity: "seismic"             # Colormap for vorticity
+
+  figure_settings:
+    dpi: 150
+    format: "png"
+
+# API token configuration
+api:
+  token_env_var: "JHTDB_MY_TOKEN"    # Primary token (high capacity)
+  fallback_token: "JHTDB_API_TOKEN"  # Fallback token (standard)
+  cache_dir: "data/giverny_cache"    # Cache directory for givernylocal
+
+# Computational settings
+computation:
+  vorticity:
+    enabled: true                    # Compute vorticity from velocity
+    components: ["omega_z"]          # Components to compute (omega_z for 2D plane)
+
+# Metadata
+metadata:
+  created: "2025-11-04"
+  version: "1.0"
+  notes: |
+    This configuration fetches wall-parallel (x-z) channel flow data at full DNS
+    resolution by limiting the domain extent. The domain is reduced to 2π × π
+    (1/4 × 1/3 of the full 8π × 3π domain) to allow 512×512 grid to match the
+    DNS grid spacing exactly.
