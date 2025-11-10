@@ -1,13 +1,14 @@
 # JHTDB-DEEP-LEARNING
 
-Adapted from and built on top of the excellent [pyJHTDB](https://github.com/idies/pyJHTDB) project. This repository adds a practical workflow for fetching channel-flow planes from the Johns Hopkins Turbulence Database (JHTDB) and for experimenting with data-driven and machine learning models like super-resolution models on the resulting datasets. Maintained by [Aditya Sai Pranith Ayapilla](https://sites.google.com/view/adityasaipranithayapilla/home). For more information on the Johns Hopkins turbulence database, please check https://turbulence.idies.jhu.edu/database.
+A repository to explore and test data-driven and deep learning frameworks on fluid dynamics datasets - provided by the [Johns Hopkins Turbulence Database](https://turbulence.idies.jhu.edu/home). 
+Adapted from and built on top of the excellent [pyJHTDB](https://github.com/idies/pyJHTDB) project. This repository adds a practical workflow for fetching data from the Johns Hopkins Turbulence Database (JHTDB) and for experimenting with data-driven and machine learning models like super-resolution models on the resulting datasets. Maintained by [Aditya Sai Pranith Ayapilla](https://sites.google.com/view/adityasaipranithayapilla/home). For more information on the Johns Hopkins turbulence database, please check https://turbulence.idies.jhu.edu/database.
 
 ---
 
 ## Core capabilities
 
 1. **Data acquisition and dataset generation**  
-   `notebooks/jhtdb_data_fetching.ipynb` connects to JHTDB, respects query limits, tiles the velocity field, and saves consistent snapshot bundles to `data/raw/`.
+   `notebooks/jhtdb_data_fetching.ipynb` connects to JHTDB, respects query limits, tiles the desired field data, and saves consistent snapshot bundles to `data/raw/`.
 
 2. **Macine learning pipeline**  
    `notebooks/ml_pipeline_sr.ipynb` consumes those snapshots, prepares training tensors, instantiates registered models (currently the Hybrid DSC/MS variant), and evaluates the predictions with full-field patch blending and rich visual diagnostics.
