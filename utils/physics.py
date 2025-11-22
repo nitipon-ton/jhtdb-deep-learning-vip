@@ -261,6 +261,91 @@ def compute_divergence_2d(
     return divergence
 
 
+def gradient_magnitude_2d(field: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """Compute |∇field| with central differences."""
+    dfdx = np.gradient(field, dx, axis=0)
+    dfdy = np.gradient(field, dy, axis=1)
+    return np.sqrt(dfdx**2 + dfdy**2)
+
+
+def laplacian_2d(field: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """Compute ∇²field using second-order central differences."""
+    d2fdx2 = (np.roll(field, -1, axis=0) - 2 * field + np.roll(field, 1, axis=0)) / (dx**2)
+    d2fdy2 = (np.roll(field, -1, axis=1) - 2 * field + np.roll(field, 1, axis=1)) / (dy**2)
+    return d2fdx2 + d2fdy2
+
+
+def advection_u_dot_grad_omega(
+    ux: np.ndarray,
+    uy: np.ndarray,
+    omega: np.ndarray,
+    dx: float,
+    dy: float,
+) -> np.ndarray:
+    """
+    Compute advection term u·∇ω for 2D velocity and scalar vorticity.
+    """
+    domega_dx = np.gradient(omega, dx, axis=0)
+    domega_dy = np.gradient(omega, dy, axis=1)
+    return ux * domega_dx + uy * domega_dy
+
+
+def energy_spectrum_2d(
+    field: np.ndarray,
+    dx: float,
+    dy: float,
+    bins: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Compute isotropic 2D energy spectrum via radial averaging of |FFT(field)|^2.
+
+    Returns:
+        k (radial wavenumber centers), E(k)
+    """
+    data = np.asarray(field, dtype=np.float64)
+    data = data - data.mean()
+    ny, nx = data.shape
+    bins = bins or min(nx, ny) // 2
+
+    fft = np.fft.fftshift(np.fft.fft2(data))
+    spectrum_2d = (np.abs(fft) ** 2) * (dx * dy) / (nx * ny)
+
+    kx = np.fft.fftshift(np.fft.fftfreq(nx, d=dx)) * 2 * np.pi
+    ky = np.fft.fftshift(np.fft.fftfreq(ny, d=dy)) * 2 * np.pi
+    kx_grid, ky_grid = np.meshgrid(kx, ky)
+    k_mag = np.sqrt(kx_grid**2 + ky_grid**2)
+
+    k_max = k_mag.max()
+    k_bins = np.linspace(0, k_max, bins + 1)
+    E = np.zeros(bins)
+
+    flat_k = k_mag.ravel()
+    flat_spec = spectrum_2d.ravel()
+    inds = np.digitize(flat_k, k_bins) - 1
+    for i in range(bins):
+        mask = inds == i
+        if np.any(mask):
+            E[i] = flat_spec[mask].mean()
+
+    k_centers = 0.5 * (k_bins[:-1] + k_bins[1:])
+    return k_centers, E
+
+
+def pdf_from_field(
+    field: np.ndarray,
+    bins: int = 100,
+    value_range: tuple[float, float] | None = None,
+    density: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Compute histogram/PDF for a field, returning bin centers and probabilities.
+    """
+    data = np.asarray(field).ravel()
+    hist, edges = np.histogram(data, bins=bins, range=value_range, density=density)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return centers, hist
+
+
 def add_vorticity_to_plane(
     plane_data: dict,
     x_coords: np.ndarray | None = None,

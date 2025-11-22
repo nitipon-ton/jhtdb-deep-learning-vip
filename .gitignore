@@ -152,3 +152,7 @@ Dockerfile
 docker-compose.yml
 docker-compose.yaml
 .dockerignore
+
+#Others
+3d-sr-micrometeorology-main/
+guides/

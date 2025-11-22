@@ -8,10 +8,10 @@ Adapted from and built on top of the excellent [pyJHTDB](https://github.com/idie
 ## Core capabilities
 
 1. **Data acquisition and dataset generation**  
-   `notebooks/jhtdb_data_fetching.ipynb` connects to JHTDB, respects query limits, tiles the desired field data, and saves consistent snapshot bundles to `data/raw/`.
+   `notebooks/jhtdb/jhtdb_data_fetching.ipynb` connects to JHTDB, respects query limits, tiles the desired field data, and saves consistent snapshot bundles to `data/raw/`.
 
 2. **Macine learning pipeline**  
-   `notebooks/ml_pipeline_sr.ipynb` consumes those snapshots, prepares training tensors, instantiates registered models (currently the Hybrid DSC/MS variant), and evaluates the predictions with full-field patch blending and rich visual diagnostics.
+   `notebooks/super_resolution/data_inspection.ipynb`, `notebooks/super_resolution/training_sr.ipynb`, and `notebooks/super_resolution/postprocessing_sr.ipynb` consume those datasets, prepare training tensors, instantiate registered models, train them (optionally with physics-informed losses), and evaluate predictions with both image-based and physics-based diagnostics.
 
 More data-driven frameworks (e.g., modal decomposition, denoising) will be layered on top of this foundation.
 
@@ -19,17 +19,19 @@ More data-driven frameworks (e.g., modal decomposition, denoising) will be layer
 
 ## 1) Data fetching and preprocessing
 
-### Notebook: `notebooks/jhtdb_data_fetching.ipynb`
+### Notebooks under `notebooks/jhtdb/`
 
-This workflow is designed to be rerun whenever new snapshots are needed:
+- **`jhtdb_data_fetching.ipynb`**  
+  - Configure the flow case and query settings via `configs_jhtdb/*.yaml`.  
+  - Fetch snapshots from JHTDB, tile requests to respect point limits, and stitch tiles into full planes with fields like `ux`, `uy`, `uz`, `omega_z`, and `time`.  
+  - Store everything as HDF5 under `data/raw/<case>/` and perform quick visual checks before heavy training.
 
-1. **Configuration** – set the flow case, pick the wall-normal location, the number of snapshots, and the temporal spacing. The notebook references the same YAML configuration structure used elsewhere so runs remain reproducible.
-2. **Authentication** – supply your JHTDB API token (the notebook reads it from `.env` for convenience).
-3. **Tiled acquisition** – JHTDB imposes a 4096-point limit per request. The notebook decomposes the target plane into manageable tiles, fetches each tile, and stitches them into a full 256×256 field for every snapshot. All three velocity components plus derived quantities such as vorticity are retrieved. Of course, you can get your own API key to access more than 4096 points per query. Check https://turbulence.idies.jhu.edu/database
-4. **Quality checks** – visual comparisons and basic statistics ensure the downloads look sensible before committing them to disk.
-5. **Serialisation** – every snapshot bundle is written to `data/raw/` using portable HDF5 files. The downstream SR notebook expects files shaped `(time, component, height, width)` with consistent naming, so once this notebook completes you can move straight to model training without additional massaging.
+- **`prepare_isotropic_xy_128.ipynb`**  
+  - Load `data/raw/isotropic_xy_512/isotropic_xy_512.h5`.  
+  - Split each 512×512 snapshot into 128×128 tiles and write them to `data/raw/isotropic_xy_128/isotropic_xy_128.h5`.  
+  - This 128×128 dataset is used by the SR notebooks for 4× upscaling from 32×32 LR.
 
-This data-fetch notebook is intentionally self-contained: each cell logs progress, catches API throttling, and saves intermediate tiles to avoid repeating expensive queries.
+If you already have compatible HDF5 files, you can point the SR configs directly at your own data and skip these steps.
 
 ---
 
@@ -37,65 +39,39 @@ This data-fetch notebook is intentionally self-contained: each cell logs progres
 
 ### What’s implemented right now
 
-- **Data ingestion from local HDF5** created by the fetch notebook: loading velocity components and derived fields, global normalisation, and synthetic low-resolution creation through configurable downsampling.
-- **Patch extraction with augmentation** (flips, rotations, optional noise) to build paired LR/HR tensors ready for PyTorch training.
-- **Model zoo** focused on super-resolution: the primary entry point builds `HybridDSCMSR`, a wrapper around the hybrid DSC/MS architecture that handles scale-aware upsampling. Other registered builders (plain U-Net, small MLPs, etc.) remain available through the factory.
-- **Training loop inside `notebooks/ml_pipeline_sr.ipynb`** with metric logging, optional gradient clipping, LR scheduling, and an automatic guard that disables mixed precision when running on Apple MPS to avoid kernel crashes.
-- **Full-field evaluation** that tiles a 64×64 low-resolution plane into overlapping patches, runs the network on each patch, and blends the 64×64 predictions into a seamless 256×256 output using a Hann window. Baseline interpolations (nearest, bilinear, bicubic) are generated for side-by-side comparisons.
-- **Metric and figure generation**: PSNR, MAE, correlation tables plus profile plots and contour maps saved into the experiment workspace.
+- **Config-driven experiments**  
+  - YAML configs in `configs/` define dataset paths, splits, model architecture, training hyperparameters, and physics-loss coefficients.  
+  - The notebooks read one config and wire datasets, models, and training via `models.factory.build_model_from_config`.
 
----
+- **SR models**  
+  - Meteorology-inspired UNet (`unet_meteo`) for 4× SR (e.g. 32→128 or 128→512) following Yasuda et al. (2023). 
+  - Hybrid DSC/MS model (`hdsc_ms`) following Fukami et al. (2019).  
+  - EDSR variants and an MLP baseline.  
+  All assume single-channel SR (ω_z), with optional temporal stacking handled by the dataset classes.
 
-### Repository layout
+
+- **Training and evaluation notebooks**  
+  - `data_inspection.ipynb`: inspect ranges, normalisation, and several snapshots before training.  
+  - `training_sr.ipynb`: main training loop with multi-GPU (DataParallel), optional mixed precision (CUDA only), gradient clipping, LR schedulers, and structured run directories under `work/SR/`.  
+  - `postprocessing_sr.ipynb`: evaluate a chosen run on test data, generate full-field and zoom comparisons (bicubic vs SR vs HR), error maps, PDFs, energy spectra, and physics-term comparisons.
+
+### Repository layout (relevant pieces)
 
 ```
-├── configs/              # YAML experiment settings
-├── dataloaders/          # (archived under backups/) legacy CLI fetchers
-├── guides/               # Short developer notes
-├── models/               # Registered architectures and wrappers
-├── notebooks/
-│   ├── jhtdb_data_fetching.ipynb  # Snapshot acquisition
-│   └── ml_pipeline_sr.ipynb      # End-to-end SR workflow
-├── utils/                # Metrics, physics helpers, IO utilities
-├── work/                 # Auto-created run directories (checkpoints, plots)
-└── README.md
+configs/             # SR experiment configs (models, training, data paths)
+configs_jhtdb/       # JHTDB fetch configs (API and plane selection)
+data/raw/            # HDF5 datasets (fetched + preprocessed)
+models/SR/           # SR architectures (UNet, hDSC/MS, EDSR, MLP, etc.)
+models/factory.py    # Model registry and build helpers
+notebooks/jhtdb/     # Data fetching and tiling notebooks
+notebooks/super_resolution/
+  ├─ data_inspection.ipynb
+  ├─ training_sr.ipynb
+  └─ postprocessing_sr.ipynb
+utils/               # Experiment manager, metrics, physics utilities
+work/SR/             # Auto-created run directories (configs, checkpoints, plots)
 ```
-
-Everything in `work/`, `data/`, and `saved_models/` is ignored by git so local experiments stay isolated; `.gitkeep` files preserve the folder structure.
-
 ---
-
-### Getting started
-
-1. **Environment**  
-   ```bash
-   conda env create -f environment.yml
-   conda activate jhtdb-ml
-   ```
-
-2. **Data**  
-   Place your channel-flow HDF5 file (e.g. `data/channel_sr_256.h5`) in the `data/` directory. The SR notebook expects fields named `ux`, `uy`, `uz`, `omega_z`, `time`, `y_value` with 256×256 slices.
-
-3. **Run the pipeline notebook**  
-   ```bash
-   jupyter notebook notebooks/02_sr_pipeline.ipynb
-   ```
-   The notebook walks through configuration loading, data inspection, patch generation, model instantiation, training, and evaluation. All intermediate artefacts are stored in a timestamped folder under `work/SR/`.
-
----
-
-### Training workflow in the notebook
-
-1. **Configuration** – reads a YAML experiment file, resolves paths, and prints the active hyperparameters.
-2. **Data preparation** – loads all snapshots, normalises them (z-score), creates synthetic LR fields by average pooling, and extracts overlapped LR/HR patch pairs according to the scale factor.
-3. **Model selection** – builds the configured architecture via `models.factory.build_model_from_config`. Any new model can be registered without modifying the notebook.
-4. **Training loop** – runs for the requested epochs with progress bars for train/val splits, logs PSNR, saves the best checkpoint, and serialises the history to disk.
-5. **Patch-based reconstruction** – after training, predicts SR patches for the full LR plane, blends them into a 256×256 field, and compares against interpolation baselines using consistent colour limits and statistics.
-
-Mixed precision is automatically disabled when the active device is Apple’s MPS backend, preventing the common fp16 kernel crash on macOS.
-
----
-
 
 ### Switching models or experiments
 
@@ -104,12 +80,22 @@ Mixed precision is automatically disabled when the active device is Apple’s MP
 
 ---
 
-### Troubleshooting tips
+### Create Environment to for Getting started (or run in a docker container - see below.)
 
-- Kernel crash on macOS: leave mixed precision off (default behaviour now).  
-- Memory pressure: reduce `training.batch_size` or use fewer snapshots.  
-- Slow data loading: keep `num_workers=0` inside the notebook; parallel loading can be re-enabled cautiously in scripted runs.  
-- HDF5 key mismatch: inspect available datasets with `h5py.File` and adjust the config or loader logic accordingly.
+```bash
+conda env create -f environment.yml
+conda activate jhtdb-ml
+```
+
+---
+
+## Docker / Containers
+
+- A public Docker setup is provided under `Docker/`:
+  - `Docker/Dockerfile`: builds a Miniconda-based image using `environment.yml`.
+  - `Docker/docker-compose.yml`: optional Compose file for running the project (e.g., with Jupyter Lab).
+- It is generally recommended to run this repository inside a container for reproducibility and clean isolation from host dependencies.
+- If you use VS Code, you can also open the repo in a Dev Container using the “Dev Containers” extension; you may adapt the container configuration to your own environment as needed.
 
 ---
 

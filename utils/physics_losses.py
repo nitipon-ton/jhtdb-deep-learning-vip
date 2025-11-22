@@ -12,23 +12,73 @@ where:
 
 from __future__ import annotations
 
+# Utility helpers shared by multiple losses
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _ensure_3d(t: torch.Tensor) -> torch.Tensor:
+    """Convert (B, 1, H, W) tensors to (B, H, W) for stencil ops."""
+    return t.squeeze(1) if t.dim() == 4 else t
+
+
+def _advection_term(
+    u: torch.Tensor,
+    v: torch.Tensor,
+    omega: torch.Tensor,
+    dx: float,
+    dy: float,
+) -> torch.Tensor:
+    """
+    Compute discrete u·∇ω using central differences (returns B×(H-2)×(W-2)).
+    """
+    u = _ensure_3d(u)
+    v = _ensure_3d(v)
+    omega = _ensure_3d(omega)
+
+    domega_dx = (omega[:, :, 2:] - omega[:, :, :-2]) / (2 * dx)  # (B, H, W-2)
+    domega_dy = (omega[:, 2:, :] - omega[:, :-2, :]) / (2 * dy)  # (B, H-2, W)
+
+    u_c = u[:, 1:-1, 1:-1]
+    v_c = v[:, 1:-1, 1:-1]
+    domega_dx_c = domega_dx[:, 1:-1, :]
+    domega_dy_c = domega_dy[:, :, 1:-1]
+
+    adv = u_c * domega_dx_c + v_c * domega_dy_c
+    return torch.nan_to_num(adv, nan=0.0, posinf=1e3, neginf=-1e3).clamp_(-1e3, 1e3)
+
+
+def _laplacian_term(
+    omega: torch.Tensor,
+    dx: float,
+    dy: float,
+) -> torch.Tensor:
+    """
+    Compute discrete ∇²ω using a 5-point stencil (returns B×(H-2)×(W-2)).
+    """
+    omega = _ensure_3d(omega)
+
+    d2omega_dx2 = (omega[:, :, 2:] - 2 * omega[:, :, 1:-1] + omega[:, :, :-2]) / (dx ** 2)
+    d2omega_dy2 = (omega[:, 2:, :] - 2 * omega[:, 1:-1, :] + omega[:, :-2, :]) / (dy ** 2)
+
+    d2omega_dx2_c = d2omega_dx2[:, 1:-1, :]
+    d2omega_dy2_c = d2omega_dy2[:, :, 1:-1]
+
+    lap = d2omega_dx2_c + d2omega_dy2_c
+    return torch.nan_to_num(lap, nan=0.0, posinf=1e3, neginf=-1e3).clamp_(-1e3, 1e3)
+
+
 class AdvectionLoss(nn.Module):
     """
-    Physics-informed advection loss: matches advection terms between DNS and ML.
+    Physics-informed advection loss: matches DNS vs ML advection terms.
 
-    Correct formulation:
-        E_adv = ||u_DNS·∇ω_DNS - u_ML·∇ω_ML||²
+    Loss:
+        E_adv = ||u_DNS·∇ω_ML − u_DNS·∇ω_DNS||²
 
-    This ensures the ML prediction's physics matches the DNS physics,
-    rather than incorrectly forcing the advection term to zero.
-
-    Args:
-        reduction: 'mean', 'sum', or 'none'
+    The velocities used are always the DNS velocities; the only change between
+    ML vs DNS physics comes from the vorticity field.
     """
 
     def __init__(self, reduction: str = 'mean'):
@@ -37,81 +87,31 @@ class AdvectionLoss(nn.Module):
 
     def forward(
         self,
-        u_pred: torch.Tensor,
-        v_pred: torch.Tensor,
-        omega_pred: torch.Tensor,
-        u_target: torch.Tensor,
-        v_target: torch.Tensor,
-        omega_target: torch.Tensor,
+        u_field: torch.Tensor,
+        v_field: torch.Tensor,
+        omega_ml: torch.Tensor,
+        omega_dns: torch.Tensor,
         dx: float,
         dy: float
     ) -> torch.Tensor:
-        """
-        Compute physics-informed advection loss.
-
-        Args:
-            u_pred: ML predicted x-velocity (B, H, W) or (B, 1, H, W)
-            v_pred: ML predicted y-velocity (B, H, W) or (B, 1, H, W)
-            omega_pred: ML predicted vorticity (B, H, W) or (B, 1, H, W)
-            u_target: DNS x-velocity (B, H, W) or (B, 1, H, W)
-            v_target: DNS y-velocity (B, H, W) or (B, 1, H, W)
-            omega_target: DNS vorticity (B, H, W) or (B, 1, H, W)
-            dx: grid spacing in x-direction
-            dy: grid spacing in y-direction
-
-        Returns:
-            loss: MSE between DNS and ML advection terms
-        """
-        # Helper function to compute advection term u·∇ω
-        def compute_advection(u, v, omega):
-            # Ensure 3D tensors (B, H, W)
-            if u.dim() == 4:
-                u = u.squeeze(1)
-            if v.dim() == 4:
-                v = v.squeeze(1)
-            if omega.dim() == 4:
-                omega = omega.squeeze(1)
-
-            # Compute ∇ω using central differences
-            domega_dx = (omega[:, :, 2:] - omega[:, :, :-2]) / (2 * dx)
-            domega_dy = (omega[:, 2:, :] - omega[:, :-2, :]) / (2 * dy)
-
-            # Crop to interior points
-            u_c = u[:, 1:-1, 1:-1]
-            v_c = v[:, 1:-1, 1:-1]
-            domega_dx_c = domega_dx[:, 1:-1, :]
-            domega_dy_c = domega_dy[:, :, 1:-1]
-
-            # u·∇ω = u(∂ω/∂x) + v(∂ω/∂y)
-            return u_c * domega_dx_c + v_c * domega_dy_c
-
-        # Compute advection for both DNS and ML
-        adv_target = compute_advection(u_target, v_target, omega_target)
-        adv_pred = compute_advection(u_pred, v_pred, omega_pred)
-
-        # Loss: ||adv_DNS - adv_ML||²
-        diff = adv_target - adv_pred
+        adv_dns = _advection_term(u_field, v_field, omega_dns, dx, dy)
+        adv_ml = _advection_term(u_field, v_field, omega_ml, dx, dy)
+        diff = adv_dns - adv_ml
 
         if self.reduction == 'mean':
             return torch.mean(diff ** 2)
         elif self.reduction == 'sum':
             return torch.sum(diff ** 2)
-        else:  # 'none'
+        else:
             return torch.mean(diff ** 2, dim=(-2, -1))
 
 
 class DiffusionLoss(nn.Module):
     """
-    Physics-informed diffusion loss: matches Laplacian terms between DNS and ML.
+    Physics-informed diffusion loss: matches DNS vs ML Laplacian terms.
 
-    Correct formulation:
-        E_visc = ||∇²ω_DNS - ∇²ω_ML||²
-
-    This ensures the ML prediction's diffusion matches DNS diffusion,
-    rather than incorrectly forcing ∇²ω to zero.
-
-    Args:
-        reduction: 'mean', 'sum', or 'none'
+    Loss:
+        E_diff = ||∇²ω_ML − ∇²ω_DNS||²
     """
 
     def __init__(self, reduction: str = 'mean'):
@@ -137,29 +137,9 @@ class DiffusionLoss(nn.Module):
         Returns:
             loss: MSE between DNS and ML Laplacian terms
         """
-        # Helper function to compute Laplacian ∇²ω
-        def compute_laplacian(omega):
-            # Ensure 3D tensor (B, H, W)
-            if omega.dim() == 4:
-                omega = omega.squeeze(1)
-
-            # Compute second derivatives
-            d2omega_dx2 = (omega[:, :, 2:] - 2*omega[:, :, 1:-1] + omega[:, :, :-2]) / (dx**2)
-            d2omega_dy2 = (omega[:, 2:, :] - 2*omega[:, 1:-1, :] + omega[:, :-2, :]) / (dy**2)
-
-            # Crop to interior
-            d2omega_dx2_c = d2omega_dx2[:, 1:-1, :]
-            d2omega_dy2_c = d2omega_dy2[:, :, 1:-1]
-
-            # ∇²ω = ∂²ω/∂x² + ∂²ω/∂y²
-            return d2omega_dx2_c + d2omega_dy2_c
-
-        # Compute Laplacian for both DNS and ML
-        lap_target = compute_laplacian(omega_target)
-        lap_pred = compute_laplacian(omega_pred)
-
-        # Loss: ||∇²ω_DNS - ∇²ω_ML||²
-        diff = lap_target - lap_pred
+        lap_dns = _laplacian_term(omega_target, dx, dy)
+        lap_ml = _laplacian_term(omega_pred, dx, dy)
+        diff = lap_dns - lap_ml
 
         if self.reduction == 'mean':
             return torch.mean(diff ** 2)
@@ -304,25 +284,19 @@ class PhysicsInformedLoss(nn.Module):
                 - 'diffusion': diffusion loss component
                 - 'gradient': gradient regularization (if enabled)
         """
-        # Scale grid spacing to normalized coordinates
-        # In normalized space: ∇(normalized) = σ * ∇(physical) / dx
-        # So we need: dx_normalized = dx / σ
-        if self.use_normalized_grid:
-            dx_norm = dx / sigma_omega
-            dy_norm = dy / sigma_omega
-        else:
-            dx_norm = dx
-            dy_norm = dy
+        # For stability, operate in index space (dx=dy=1) on normalized fields.
+        # Physical scaling can be absorbed into lambda_adv / lambda_diff.
+        dx_eff = 1.0
+        dy_eff = 1.0
 
-        # Compute individual losses (comparing DNS physics to ML physics!)
+        # Compute physics terms and use plain MSE:
+        #   E_adv  = ||u_DNS·∇ω_ML − u_DNS·∇ω_DNS||²
+        #   E_diff = ||∇²ω_ML − ∇²ω_DNS||²
         loss_adv = self.advection_loss(
-            u_pred, v_pred, omega_pred,
-            u_target, v_target, omega_target,
-            dx_norm, dy_norm
+            u_target, v_target, omega_pred, omega_target, dx_eff, dy_eff
         )
         loss_diff = self.diffusion_loss(
-            omega_pred, omega_target,
-            dx_norm, dy_norm
+            omega_pred, omega_target, dx_eff, dy_eff
         )
 
         # Combined loss
@@ -424,7 +398,7 @@ def test_physics_losses():
     adv_loss = AdvectionLoss()
     diff_loss = DiffusionLoss()
 
-    loss_adv = adv_loss(u, v, omega_padded, u, v, omega_padded, dx, dy)
+    loss_adv = adv_loss(u, v, omega_padded, omega_padded, dx, dy)
     loss_diff = diff_loss(omega_padded, omega_padded, dx, dy)
 
     print("Physics Losses Test:")
@@ -441,13 +415,13 @@ def test_physics_losses():
     print(f"    - Diffusion: {losses['diffusion'].item():.6f}")
 
     # Test with perturbed field
-    noise = 0.1 * torch.randn_like(omega_padded)
+    noise = 0.01 * torch.randn_like(omega_padded)
     omega_perturbed = omega_padded + noise
 
-    loss_adv_diff = adv_loss(u, v, omega_perturbed, u, v, omega_padded, dx, dy)
+    loss_adv_diff = adv_loss(u, v, omega_perturbed, omega_padded, dx, dy)
     loss_diff_diff = diff_loss(omega_perturbed, omega_padded, dx, dy)
 
-    print(f"\n  With 10% noise added to vorticity:")
+    print(f"\n  With 1% noise added to vorticity:")
     print(f"    Advection loss: {loss_adv_diff.item():.6f} (should be > 0)")
     print(f"    Diffusion loss: {loss_diff_diff.item():.6f} (should be > 0)")
 

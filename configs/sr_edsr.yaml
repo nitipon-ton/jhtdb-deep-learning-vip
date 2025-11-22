@@ -14,6 +14,7 @@
 
 experiment:
   name: "sr_edsr_isotropic"
+  run_name: null
   description: "EDSR baseline for isotropic turbulence SR (128→512)"
   author: "Aditya Sai Pranith Ayapilla"
 
@@ -42,7 +43,7 @@ data:
 
   augmentation:
     enabled: false
-    cyclic_shift: true
+    cyclic_shift: false
     rot180: true
     flipx: true
     flipy: true
@@ -79,8 +80,8 @@ model:
 # TRAINING
 # =============================================================================
 training:
-  epochs: 100
-  batch_size: 16           # Adjust based on memory
+  epochs: 50
+  batch_size: 32          # With 4 GPUs: 32→8 per GPU, 64→16 per GPU
   num_workers: 0
   optimizer: "adam"        # EDSR paper uses Adam
   lr: 1.0e-4
@@ -93,7 +94,7 @@ training:
     step_size: 80          # Decay every 80 epochs
     gamma: 0.5             # Multiply LR by 0.5
 
-  mixed_precision: false
+  mixed_precision: true
 
   gradient_clipping:
     enabled: true
@@ -104,6 +105,9 @@ training:
     patience: 40
     metric: "val_loss"
     mode: "min"
+  checkpoints:
+    best: "best_model.pth"
+    last: "last_model.pth"
 
 # =============================================================================
 # LOSS FUNCTIONS
@@ -116,14 +120,20 @@ loss:
       type: "l1"           # EDSR uses L1 loss (better for SR than L2)
 
     gradient:
-      enabled: false
+      enabled: true
+      weight: 0.1
 
     spectral:
       enabled: false
 
     physics:
-      enabled: false       # Start without physics, add later if needed
-
+      enabled: false
+      lambda_adv: 1.0e-4
+      lambda_diff: 1.0e-5
+      lambda_grad: 0.0
+      warmup:
+        enabled: true
+        warmup_epochs: 10       
 # =============================================================================
 # EVALUATION
 # =============================================================================

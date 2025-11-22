@@ -17,10 +17,11 @@ from typing import Callable, Dict, Tuple
 
 import torch.nn as nn
 
-from models.mlp_sr import MLPSuperResolution, TinyMLP
-from models.unet_sr import UNetSRx4, UNetSRx8
-from models.hdsc_ms import HybridDSCMSR
-from models.edsr import EDSR, EDSRLite
+from models.SR.mlp_sr import MLPSuperResolution, TinyMLP
+from models.SR.unet_sr import UNetSRx4, UNetSRx8
+from models.SR.hdsc_ms import HybridDSCMSR
+from models.SR.edsr import EDSR, EDSRLite
+from models.SR.unet_meteo import MeteorologyUNetSR
 
 ModelBuilder = Callable[[Dict, int, int], nn.Module]
 _MODEL_REGISTRY: Dict[str, ModelBuilder] = {}
@@ -111,7 +112,22 @@ def _build_hdsc_ms(model_cfg: Dict, patch_size_lr: int, patch_size_hr: int) -> n
         ms_mid=int(params.get("ms_mid", 16)),
         ms_small=int(params.get("ms_small", 8)),
         ms_out=int(params.get("ms_out", 3)),
-        act=params.get("activation", "relu"),
+        upsample_mode=params.get("upsample_mode", "bilinear"),
+    )
+
+
+@register_model("unet_meteo")
+def _build_unet_meteo(model_cfg: Dict, patch_size_lr: int, patch_size_hr: int) -> nn.Module:
+    params = model_cfg.get("unet_meteo", {})
+    feature_channels = params.get("feature_channels", [32, 64, 128, 256])
+    return MeteorologyUNetSR(
+        in_channels=int(params.get("in_ch", 1)),
+        out_channels=int(params.get("out_ch", 1)),
+        scale_factor=int(model_cfg.get("scale_factor", patch_size_hr // patch_size_lr)),
+        feature_channels=feature_channels,
+        n_blocks_per_stage=int(params.get("n_blocks_per_stage", 2)),
+        num_latent_layers=int(params.get("num_latent_layers", 2)),
+        pre_upsample_mode=params.get("pre_upsample_mode", "bilinear"),
     )
 
 
