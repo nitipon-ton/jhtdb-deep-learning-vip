@@ -1,4 +1,4 @@
-# Registering custom models in JHTDB-ML
+# Registering custom models in JHTDB-DEEP-LEARNING
 
 The repository exposes a small factory (`models/factory.py`) that converts YAML configuration entries into actual `torch.nn.Module` instances. Registering a new model is a two-step process:
 
