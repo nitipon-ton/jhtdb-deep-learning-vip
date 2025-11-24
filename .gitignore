@@ -140,12 +140,6 @@ site/
 *.orig
 backups/
 
-# Claude Code
-claude.md
-.claude/
-.claude_*
-*.claude
-
 # Docker and DevContainer
 .devcontainer/
 Dockerfile
