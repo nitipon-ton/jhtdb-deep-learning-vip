@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  jhtdb-ml:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile
+    image: jhtdb-ml:latest
+    container_name: jhtdb-ml
+
+    # Mount the repo so changes on the host are visible inside the container
+    volumes:
+      - ..:/workspace
+
+    working_dir: /workspace
+
+    # Expose Jupyter on host port 8888 (optional)
+    ports:
+      - "8888:8888"
+
+    # For GPU usage with the NVIDIA container toolkit, uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: ["gpu"]
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+    #   - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+    # Default command starts Jupyter Lab; you can change this to "bash"
+    # if you prefer attaching interactively.
+    command: >
+      bash -c "jupyter lab
+        --ip=0.0.0.0
+        --no-browser
+        --allow-root
+        --NotebookApp.token=''
+        --NotebookApp.password=''"
+

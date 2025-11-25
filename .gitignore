@@ -142,9 +142,10 @@ backups/
 
 # Docker and DevContainer
 .devcontainer/
-Dockerfile
-docker-compose.yml
-docker-compose.yaml
+# Ignore root-level Docker helpers only; keep Docker/ tracked
+/Dockerfile
+/docker-compose.yml
+/docker-compose.yaml
 .dockerignore
 
 #Others
