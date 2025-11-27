@@ -22,6 +22,7 @@ from models.SR.unet_sr import UNetSRx4, UNetSRx8
 from models.SR.hdsc_ms import HybridDSCMSR
 from models.SR.edsr import EDSR, EDSRLite
 from models.SR.unet_meteo import MeteorologyUNetSR
+from models.SR.esrgan import ESRGANGenerator
 
 ModelBuilder = Callable[[Dict, int, int], nn.Module]
 _MODEL_REGISTRY: Dict[str, ModelBuilder] = {}
@@ -179,3 +180,16 @@ def _build_edsr(model_cfg: Dict, _: int, __: int) -> nn.Module:
             in_channels=int(params.get("in_channels", 1)),
             out_channels=int(params.get("out_channels", 1)),
         )
+@register_model("esrgan")
+def _build_esrgan(model_cfg: Dict, patch_size_lr: int, patch_size_hr: int) -> nn.Module:
+    """Build ESRGAN-style RRDB generator."""
+    params = model_cfg.get("esrgan", {})
+    scale = int(model_cfg.get("scale_factor", patch_size_hr // patch_size_lr))
+    return ESRGANGenerator(
+        in_channels=int(params.get("in_ch", 1)),
+        out_channels=int(params.get("out_ch", 1)),
+        nf=int(params.get("nf", 64)),
+        gc=int(params.get("gc", 32)),
+        num_blocks=int(params.get("num_blocks", 23)),
+        scale=scale,
+    )

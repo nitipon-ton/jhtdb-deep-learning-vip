@@ -95,7 +95,8 @@ loss:
     spectral:
       enabled: false
     physics:
-      enabled: false
+      enabled: true
+      track_only: false
       lambda_adv: 1.0e-1
       lambda_diff: 1.0e-1
       lambda_grad: 0.0

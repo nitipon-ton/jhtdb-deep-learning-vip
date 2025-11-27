@@ -1,0 +1,124 @@
+# =============================================================================
+# Super-Resolution: ESRGAN (RRDBNet) on isotropic turbulence (32 → 128)
+# =============================================================================
+# Reference:
+#   Wang et al., "ESRGAN: Enhanced Super-Resolution Generative Adversarial Networks"
+#
+# This config trains the ESRGAN generator as a deterministic SR model (no GAN
+# losses) on the 128×128 isotropic dataset, using 4× SR from 32×32 LR inputs.
+# =============================================================================
+
+experiment:
+  name: "sr_esrgan_isotropic"
+  run_name: "sr_esrgan_isotropic_ganOFF_physicsON"  # Set to reuse work/SR/<run_name>; null = timestamped runs
+  description: "ESRGAN generator (RRDBNet) on isotropic turbulence 32→128 SR"
+  author: "Aditya Sai Pranith Ayapilla"
+
+data:
+  h5_path: "data/raw/isotropic_xy_128/isotropic_xy_128.h5"
+  split:
+    train_snapshots: 5994
+    val_snapshots: 1198
+    test_snapshots: 800
+  component: "omega_z"
+  normalization:
+    method: "global"
+  lr_maker:
+    method: "avgpool"
+    scale: 4
+  temporal:
+    enabled: false
+  augmentation:
+    enabled: false
+    rot180: true
+    flipx: true
+    flipy: true
+    cyclic_shift: false
+
+domain:
+  dataset: "isotropic1024coarse"
+  dns_info:
+    effective_resolution:
+      dx: 0.006136
+      dy: 0.006136
+      dz: 0.006136
+
+model:
+  architecture: "esrgan"
+  scale_factor: 4
+  esrgan:
+    in_ch: 1
+    out_ch: 1
+    nf: 64          # Base feature width
+    gc: 32          # Growth channels in dense blocks
+    num_blocks: 12  # Number of RRDB blocks
+
+training:
+  epochs: 200
+  batch_size: 32
+  num_workers: 0
+  optimizer: "adamw"
+  lr: 1.0e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  lr_scheduler:
+    enabled: true
+    type: "cosine"
+    t_max: 60
+    eta_min: 1.0e-5
+  mixed_precision: false
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+  early_stopping:
+    enabled: true
+    patience: 20
+    metric: "val_loss"
+    mode: "min"
+  checkpoints:
+    best: "best_model.pth"
+    last: "last_model.pth"
+  gan:
+    enabled: false
+    lambda_gan: 1.0e-4
+    d_iters: 1            # discriminator updates per generator update
+    d_init_iters: 0       # train pixel-only for this many iterations before GAN loss
+    discriminator:
+      in_ch: 1
+      nf: 32
+    optim_d:
+      type: "adam"
+      lr: 1.0e-4
+      betas: [0.9, 0.99]
+
+loss:
+  components:
+    pixel:
+      enabled: true
+      weight: 1.0
+      type: "l1"
+    gradient:
+      enabled: false
+      weight: 0.1
+    spectral:
+      enabled: false
+    physics:
+      enabled: true
+      track_only: false
+      lambda_adv: 1.0e-1
+      lambda_diff: 1.0e-1
+      lambda_grad: 0.0
+      warmup:
+        enabled: false
+        warmup_epochs: 10
+
+evaluation:
+  compute_psnr: true
+  compute_ssim: true
+  turbulence_metrics:
+    enabled: true
+    energy_spectrum: true
+    enstrophy: true
+
+hardware:
+  device: "cuda"

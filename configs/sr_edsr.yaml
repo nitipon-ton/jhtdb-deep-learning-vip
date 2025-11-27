@@ -128,6 +128,7 @@ loss:
 
     physics:
       enabled: false
+      track_only: false
       lambda_adv: 1.0e-4
       lambda_diff: 1.0e-5
       lambda_grad: 0.0

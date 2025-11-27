@@ -71,3 +71,51 @@ class TotalVariationLoss(nn.Module):
         dx = x[..., :, 1:] - x[..., :, :-1]
         dy = x[..., 1:, :] - x[..., :-1, :]
         return (dx.abs().mean() + dy.abs().mean()) / 2
+
+
+class RelativisticAverageGANLoss(nn.Module):
+    """
+    Relativistic average GAN (RaGAN) loss used in ESRGAN.
+
+    Provides generator and discriminator losses using BCE-with-logits.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.criterion = nn.BCEWithLogitsLoss()
+
+    def generator_loss(self, real_pred: torch.Tensor, fake_pred: torch.Tensor) -> torch.Tensor:
+        """
+        Relativistic generator loss.
+
+        Args:
+            real_pred: Discriminator logits on real samples.
+            fake_pred: Discriminator logits on fake samples (G output).
+        """
+        real_label = torch.zeros_like(real_pred)
+        fake_label = torch.ones_like(fake_pred)
+
+        mean_fake = torch.mean(fake_pred)
+        mean_real = torch.mean(real_pred)
+
+        loss_real = self.criterion(real_pred - mean_fake.detach(), real_label)
+        loss_fake = self.criterion(fake_pred - mean_real.detach(), fake_label)
+        return 0.5 * (loss_real + loss_fake)
+
+    def discriminator_loss(self, real_pred: torch.Tensor, fake_pred: torch.Tensor) -> torch.Tensor:
+        """
+        Relativistic discriminator loss.
+
+        Args:
+            real_pred: Discriminator logits on real samples.
+            fake_pred: Discriminator logits on fake samples.
+        """
+        real_label = torch.ones_like(real_pred)
+        fake_label = torch.zeros_like(fake_pred)
+
+        mean_fake = torch.mean(fake_pred.detach())
+        mean_real = torch.mean(real_pred.detach())
+
+        loss_real = self.criterion(real_pred - mean_fake, real_label)
+        loss_fake = self.criterion(fake_pred - mean_real, fake_label)
+        return 0.5 * (loss_real + loss_fake)
