@@ -23,6 +23,7 @@ from models.SR.hdsc_ms import HybridDSCMSR
 from models.SR.edsr import EDSR, EDSRLite
 from models.SR.unet_meteo import MeteorologyUNetSR
 from models.SR.esrgan import ESRGANGenerator
+from models.SR.swinir import SwinIRLite
 
 ModelBuilder = Callable[[Dict, int, int], nn.Module]
 _MODEL_REGISTRY: Dict[str, ModelBuilder] = {}
@@ -191,5 +192,22 @@ def _build_esrgan(model_cfg: Dict, patch_size_lr: int, patch_size_hr: int) -> nn
         nf=int(params.get("nf", 64)),
         gc=int(params.get("gc", 32)),
         num_blocks=int(params.get("num_blocks", 23)),
+        scale=scale,
+    )
+
+
+@register_model("swinir")
+def _build_swinir(model_cfg: Dict, patch_size_lr: int, patch_size_hr: int) -> nn.Module:
+    """Build a lightweight SwinIR generator."""
+    params = model_cfg.get("swinir", {})
+    scale = int(model_cfg.get("scale_factor", patch_size_hr // patch_size_lr))
+    return SwinIRLite(
+        in_ch=int(params.get("in_ch", 1)),
+        out_ch=int(params.get("out_ch", 1)),
+        embed_dim=int(params.get("embed_dim", 64)),
+        depths=int(params.get("depths", 6)),
+        num_heads=int(params.get("num_heads", 4)),
+        window_size=int(params.get("window_size", 8)),
+        mlp_ratio=float(params.get("mlp_ratio", 2.0)),
         scale=scale,
     )

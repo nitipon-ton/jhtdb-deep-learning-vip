@@ -351,6 +351,172 @@ class MultiFieldDataset(Dataset):
         }
 
 
+class RandomCropSRDataset(Dataset):
+    """
+    Dataset that samples random HR patches (e.g., 128×128) from large snapshots
+    (e.g., 512×512) and creates LR patches on the fly via average pooling.
+    """
+
+    def __init__(
+        self,
+        omega_seq: np.ndarray,
+        indices: List[int],
+        patch_size_hr: int = 128,
+        scale: int = 4,
+        num_crops_per_snapshot: int = 4,
+        normalize: str = "global",
+        mu: Optional[float] = None,
+        sigma: Optional[float] = None,
+        stats: Optional[Dict[str, Tuple[float, float]]] = None,
+        ux_seq: Optional[np.ndarray] = None,
+        uy_seq: Optional[np.ndarray] = None,
+        transform_config: Optional[Dict] = None,
+    ):
+        self.omega = torch.from_numpy(omega_seq).float()
+        self.indices = indices
+        self.patch = patch_size_hr
+        self.scale = scale
+        self.num_crops = num_crops_per_snapshot
+        self.normalize = normalize
+        self.mu = mu
+        self.sigma = sigma
+        self.stats = stats or {}
+        self.ux = torch.from_numpy(ux_seq).float() if ux_seq is not None else None
+        self.uy = torch.from_numpy(uy_seq).float() if uy_seq is not None else None
+        self.transform_config = transform_config or {}
+
+        if normalize == "global" and (mu is None or sigma is None):
+            raise ValueError("Global normalization requires mu and sigma")
+
+    def __len__(self) -> int:
+        return len(self.indices) * self.num_crops
+
+    def _rand_coords(self, H: int, W: int) -> Tuple[int, int]:
+        step = self.scale
+        max_h = (H - self.patch) // step
+        max_w = (W - self.patch) // step
+        y0 = int(torch.randint(0, max_h + 1, (1,)).item()) * step
+        x0 = int(torch.randint(0, max_w + 1, (1,)).item()) * step
+        return y0, x0
+
+    def _norm_scalar(self, x: torch.Tensor) -> torch.Tensor:
+        if self.normalize == "global":
+            return (x - self.mu) / (self.sigma + 1e-8)
+        mu = x.mean()
+        sigma = x.std()
+        return (x - mu) / (sigma + 1e-8)
+
+    def _norm_component(self, x: torch.Tensor, name: str) -> torch.Tensor:
+        if self.normalize == "global":
+            if name not in self.stats:
+                raise ValueError(f"Missing stats for component {name}")
+            mu, sigma = self.stats[name]
+            return (x - mu) / (sigma + 1e-8)
+        mu = x.mean()
+        sigma = x.std()
+        return (x - mu) / (sigma + 1e-8)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        snap_idx = self.indices[idx // self.num_crops]
+        field = self.omega[snap_idx]
+        H, W = field.shape
+        y0, x0 = self._rand_coords(H, W)
+        hr_patch = field[y0:y0+self.patch, x0:x0+self.patch]
+        lr_patch = F.avg_pool2d(hr_patch.unsqueeze(0).unsqueeze(0), kernel_size=self.scale, stride=self.scale).squeeze(0)
+
+        sample = {
+            'lr_omega': self._norm_scalar(lr_patch),
+            'hr_omega': self._norm_scalar(hr_patch),
+        }
+
+        if self.ux is not None and self.uy is not None:
+            ux_patch = self.ux[snap_idx, y0:y0+self.patch, x0:x0+self.patch]
+            uy_patch = self.uy[snap_idx, y0:y0+self.patch, x0:x0+self.patch]
+            sample['hr_ux'] = self._norm_component(ux_patch, 'ux')
+            sample['hr_uy'] = self._norm_component(uy_patch, 'uy')
+
+        return sample
+
+
+class TiledSRDataset(Dataset):
+    """
+    Deterministic tiling dataset (e.g., for validation/test) using fixed 128×128 patches.
+    """
+
+    def __init__(
+        self,
+        omega_seq: np.ndarray,
+        indices: List[int],
+        patch_size_hr: int = 128,
+        scale: int = 4,
+        normalize: str = "global",
+        mu: Optional[float] = None,
+        sigma: Optional[float] = None,
+        stats: Optional[Dict[str, Tuple[float, float]]] = None,
+        ux_seq: Optional[np.ndarray] = None,
+        uy_seq: Optional[np.ndarray] = None,
+    ):
+        self.omega = torch.from_numpy(omega_seq).float()
+        self.indices = indices
+        self.patch = patch_size_hr
+        self.scale = scale
+        self.normalize = normalize
+        self.mu = mu
+        self.sigma = sigma
+        self.stats = stats or {}
+        self.ux = torch.from_numpy(ux_seq).float() if ux_seq is not None else None
+        self.uy = torch.from_numpy(uy_seq).float() if uy_seq is not None else None
+
+        tile_positions = []
+        tiles_per_dim = omega_seq.shape[-1] // patch_size_hr
+        for i in range(tiles_per_dim):
+            for j in range(tiles_per_dim):
+                if (i + j) % 2 == 0:
+                    y = i * patch_size_hr
+                    x = j * patch_size_hr
+                    tile_positions.append((y, x))
+        self.tile_positions = tile_positions
+
+    def __len__(self) -> int:
+        return len(self.indices) * len(self.tile_positions)
+
+    def _norm_scalar(self, x: torch.Tensor) -> torch.Tensor:
+        if self.normalize == "global":
+            return (x - self.mu) / (self.sigma + 1e-8)
+        mu = x.mean()
+        sigma = x.std()
+        return (x - mu) / (sigma + 1e-8)
+
+    def _norm_component(self, x: torch.Tensor, name: str) -> torch.Tensor:
+        if self.normalize == "global":
+            mu, sigma = self.stats[name]
+            return (x - mu) / (sigma + 1e-8)
+        mu = x.mean()
+        sigma = x.std()
+        return (x - mu) / (sigma + 1e-8)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        tile_per_snapshot = len(self.tile_positions)
+        snap_idx = self.indices[idx // tile_per_snapshot]
+        tile_idx = idx % tile_per_snapshot
+        y0, x0 = self.tile_positions[tile_idx]
+        hr_patch = self.omega[snap_idx, y0:y0+self.patch, x0:x0+self.patch]
+        lr_patch = F.avg_pool2d(hr_patch.unsqueeze(0).unsqueeze(0), kernel_size=self.scale, stride=self.scale).squeeze(0)
+
+        sample = {
+            'lr_omega': self._norm_scalar(lr_patch),
+            'hr_omega': self._norm_scalar(hr_patch),
+        }
+
+        if self.ux is not None and self.uy is not None:
+            ux_patch = self.ux[snap_idx, y0:y0+self.patch, x0:x0+self.patch]
+            uy_patch = self.uy[snap_idx, y0:y0+self.patch, x0:x0+self.patch]
+            sample['hr_ux'] = self._norm_component(ux_patch, 'ux')
+            sample['hr_uy'] = self._norm_component(uy_patch, 'uy')
+
+        return sample
+
+
 def compute_multifield_stats(
     ux_data: np.ndarray,
     uy_data: np.ndarray,
