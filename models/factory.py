@@ -9,6 +9,7 @@ Registered models:
 - hdsc_ms: Hybrid DSC/MS (Fukami et al. 2019 inspired)
 - edsr: Enhanced Deep SR (Lim et al. 2017) - proven SOTA architecture
 - mlp: Fully-connected MLP baseline
+- residual_cnn: Full-resolution periodic CNN that predicts a residual correction
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from models.SR.edsr import EDSR, EDSRLite
 from models.SR.unet_meteo import MeteorologyUNetSR
 from models.SR.esrgan import ESRGANGenerator
 from models.SR.swinir import SwinIRLite
+from models.SR.residual_cnn import ResidualCorrectionCNN2d
 
 ModelBuilder = Callable[[Dict, int, int], nn.Module]
 _MODEL_REGISTRY: Dict[str, ModelBuilder] = {}
@@ -210,4 +212,34 @@ def _build_swinir(model_cfg: Dict, patch_size_lr: int, patch_size_hr: int) -> nn
         window_size=int(params.get("window_size", 8)),
         mlp_ratio=float(params.get("mlp_ratio", 2.0)),
         scale=scale,
+    )
+
+
+@register_model("residual_cnn")
+def _build_residual_cnn(
+    model_cfg: Dict,
+    patch_size_lr: int,
+    patch_size_hr: int,
+) -> nn.Module:
+    """Build the full-resolution residual correction CNN."""
+    params = model_cfg.get("residual_cnn", {})
+    scale = int(model_cfg.get("scale_factor", patch_size_hr // patch_size_lr))
+    if patch_size_lr * scale != patch_size_hr:
+        raise ValueError(
+            f"Residual CNN scale {scale} is incompatible with "
+            f"LR/HR sizes {patch_size_lr}/{patch_size_hr}."
+        )
+    return ResidualCorrectionCNN2d(
+        scale=scale,
+        in_channels=int(params.get("in_ch", 1)),
+        out_channels=int(params.get("out_ch", 1)),
+        hidden_channels=int(params.get("hidden_channels", 32)),
+        num_residual_blocks=int(params.get("num_residual_blocks", 4)),
+        kernel_size=int(params.get("kernel_size", 3)),
+        dilation=int(params.get("dilation", 1)),
+        normalization=params.get("normalization", "batch"),
+        group_norm_groups=int(params.get("group_norm_groups", 8)),
+        activation=params.get("activation", "relu"),
+        dropout_rate=float(params.get("dropout_rate", 0.0)),
+        upsample_mode=params.get("upsample_mode", "bicubic"),
     )
