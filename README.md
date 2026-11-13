@@ -45,9 +45,10 @@ If you already have compatible HDF5 files, you can point the SR configs directly
 
 - **SR models**  
   - Meteorology-inspired UNet (`unet_meteo`) for 4× SR (e.g. 32→128 or 128→512) following Yasuda et al. (2023). 
+  - 3D meteorology UNet (`unet_meteo_3d`) for residual correction of full 128³ velocity cubes produced by the sibling `superresolution-nn` preprocessing pipeline. Train with `python scripts/train_3d.py`; add `--evaluate` to score the best checkpoint.
   - Hybrid DSC/MS model (`hdsc_ms`) following Fukami et al. (2019).  
   - EDSR variants and an MLP baseline.  
-  All assume single-channel SR (ω_z), with optional temporal stacking handled by the dataset classes.
+  - The 2D models assume single-channel SR (ω_z), with optional temporal stacking handled by the dataset classes; `unet_meteo_3d` uses the three velocity components from the 128³ cubes.
 
 
 - **Training and evaluation notebooks**  
@@ -64,10 +65,12 @@ configs_jhtdb/       # JHTDB fetch configs (API and plane selection)
 data/raw/            # HDF5 datasets (fetched + preprocessed)
 models/SR/           # SR architectures (UNet, hDSC/MS, EDSR, MLP, etc.)
 models/factory.py    # Model registry and build helpers
+scripts/             # Thin CLI entry points (train_3d.py)
 notebooks/jhtdb/     # Data fetching and tiling notebooks
 notebooks/super_resolution/
   ├─ data_inspection.ipynb
   ├─ training_sr.ipynb
+  ├─ training_sr_3d.ipynb
   └─ postprocessing_sr.ipynb
 utils/               # Experiment manager, metrics, physics utilities
 work/SR/             # Auto-created run directories (configs, checkpoints, plots)
@@ -78,6 +81,15 @@ work/SR/             # Auto-created run directories (configs, checkpoints, plots
 
 - Update the YAML under `configs/` (e.g. change `model.architecture` to `unet` or tweak training parameters).  
 - For scripted runs outside the notebook, `models.factory.available_models()` lists the registered architectures, and the helpers in `utils/experiment_manager.py` keep work directories tidy.
+- 3D velocity-cube runs use the preprocessed pairs from `superresolution-nn` ('input'/'target' `.npy` files):
+
+  ```bash
+  python scripts/train_3d.py \
+      -o data.processed_dir=/path/to/superresolution-nn/data/processed/cnn
+  python scripts/train_3d.py --evaluate --split test
+  ```
+
+  Training/evaluation logic lives in `utils/training_3d.py`; the notebook `training_sr_3d.ipynb` is a thin wrapper.
 
 ---
 

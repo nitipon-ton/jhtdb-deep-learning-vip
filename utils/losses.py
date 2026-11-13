@@ -22,6 +22,48 @@ class GradientLoss(nn.Module):
         )
 
 
+class GradientLoss3D(nn.Module):
+    """L2 loss on 3D spatial gradients (sum over z, y, x).
+
+    Mirrors :class:`GradientLoss`, which uses forward differences along the two
+    spatial axes of a 2D field.  Setting ``periodic=True`` makes the last plane
+    wrap to the first, matching the circular padding used by the SR models and
+    the periodic JHTDB cubes.
+    """
+
+    def __init__(self, periodic: bool = False):
+        super().__init__()
+        self.periodic = periodic
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        if pred.dim() != 5:
+            raise ValueError(f"Expected (B, C, D, H, W), got {tuple(pred.shape)}")
+        if pred.shape != target.shape:
+            raise ValueError(
+                f"Shape mismatch: {tuple(pred.shape)} vs {tuple(target.shape)}"
+            )
+        if pred.dtype in (torch.float16, torch.bfloat16):
+            pred = pred.float()
+        if target.dtype in (torch.float16, torch.bfloat16):
+            target = target.float()
+
+        loss = pred.new_zeros(())
+        for dim in (-3, -2, -1):
+            if self.periodic:
+                pred_diff = torch.roll(pred, shifts=-1, dims=dim) - pred
+                target_diff = torch.roll(target, shifts=-1, dims=dim) - target
+            else:
+                axis = dim % pred.dim()
+                pred_diff = pred.narrow(axis, 1, pred.size(axis) - 1) - pred.narrow(
+                    axis, 0, pred.size(axis) - 1
+                )
+                target_diff = target.narrow(
+                    axis, 1, target.size(axis) - 1
+                ) - target.narrow(axis, 0, target.size(axis) - 1)
+            loss = loss + torch.mean((pred_diff - target_diff) ** 2)
+        return loss
+
+
 class SpectralLoss(nn.Module):
     """
     Penalise differences in the azimuthally averaged energy spectrum.

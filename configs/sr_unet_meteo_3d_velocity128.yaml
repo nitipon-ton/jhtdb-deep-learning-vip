@@ -1,0 +1,96 @@
+# =============================================================================
+# 3D meteorology UNet on superresolution-nn velocity cubes
+# =============================================================================
+# Residual-correction task, matching superresolution-nn's `cnn` variant:
+#   input  = Gaussian-blurred, 4x-downsampled, cubic-spline-upsampled DNS cube
+#   target = DNS - input
+#   model  = 3D MeteorologyUNetSR3D, full resolution (scale_factor=1)
+#
+# The preprocessed pairs are written by:
+#   python -m superresolution.preprocess --config-name=cnn
+# in the sibling superresolution-nn repository.
+# =============================================================================
+
+experiment:
+  name: "sr_unet_meteo_3d_velocity128"
+  run_name: "unet_meteo_3d_residual_fullres"
+  base_dir: "work"
+
+data:
+  # Override on PACE, e.g.
+  #   -o data.processed_dir=/storage/ice1/.../data/processed/cnn
+  processed_dir: "../superresolution-nn/data/processed/cnn"
+  splits:
+    train: "train"
+    val: "val"
+    test: "test"
+  normalization: "none"        # none | per_sample | global
+  stats: null                  # required only for normalization: global
+  augmentation: false          # random flips/rolls; off for parity with the 2D runs
+
+model:
+  architecture: "unet_meteo_3d"
+  scale_factor: 1              # 1 = residual correction at full resolution
+  unet_meteo_3d:
+    in_ch: 3
+    out_ch: 3
+    feature_channels: [32, 64, 128, 256, 256]
+    n_blocks_per_stage: 2
+    num_latent_layers: 2
+    pre_upsample_mode: "trilinear"
+    norm: "batch"              # batch | group | instance | none
+    group_norm_groups: 8
+    residual: false            # false: output is the correction
+
+training:
+  seed: 42
+  epochs: 100
+  batch_size: 1                # raise to 2 when VRAM allows
+  grad_accum_steps: 1
+  num_workers: 0
+  optimizer: "adamw"
+  lr: 5.0e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  mixed_precision: true
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+  lr_scheduler:
+    enabled: true
+    type: "cosine"
+    t_max: 100
+    eta_min: 1.0e-6
+  early_stopping:
+    enabled: true
+    patience: 20
+    min_delta: 0.0
+    metric: "val_loss"
+    mode: "min"
+  resume_from: null
+  checkpoint_every: 0          # 0 disables periodic snapshots; best/last always saved
+  checkpoints:
+    best: "best_model.pth"
+    last: "last_model.pth"
+
+loss:
+  components:
+    pixel:
+      enabled: true
+      weight: 1.0
+      type: "l2"
+    gradient:
+      enabled: true
+      weight: 0.1              # same starting weight as the 2D unet_meteo configs
+      periodic: true
+    spectral:
+      enabled: false           # existing SpectralLoss is 2D-only
+    physics:
+      enabled: false           # existing physics losses are 2D-only
+
+evaluation:
+  checkpoint: null             # default: work/SR/<run_name>/checkpoints/best_model.pth
+  save_predictions: false
+
+hardware:
+  device: "cuda"

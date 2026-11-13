@@ -6,6 +6,8 @@ scattering architecture-specific logic throughout notebooks or scripts.
 
 Registered models:
 - unet: Baseline U-Net for SR
+- unet_meteo: 2D meteorology-inspired UNet
+- unet_meteo_3d: 3D meteorology-inspired UNet for periodic velocity cubes
 - hdsc_ms: Hybrid DSC/MS (Fukami et al. 2019 inspired)
 - edsr: Enhanced Deep SR (Lim et al. 2017) - proven SOTA architecture
 - mlp: Fully-connected MLP baseline
@@ -23,6 +25,7 @@ from models.SR.unet_sr import UNetSRx4, UNetSRx8
 from models.SR.hdsc_ms import HybridDSCMSR
 from models.SR.edsr import EDSR, EDSRLite
 from models.SR.unet_meteo import MeteorologyUNetSR
+from models.SR.unet_meteo_3d import MeteorologyUNetSR3D
 from models.SR.esrgan import ESRGANGenerator
 from models.SR.swinir import SwinIRLite
 from models.SR.residual_cnn import ResidualCorrectionCNN2d
@@ -132,6 +135,27 @@ def _build_unet_meteo(model_cfg: Dict, patch_size_lr: int, patch_size_hr: int) -
         n_blocks_per_stage=int(params.get("n_blocks_per_stage", 2)),
         num_latent_layers=int(params.get("num_latent_layers", 2)),
         pre_upsample_mode=params.get("pre_upsample_mode", "bilinear"),
+    )
+
+
+@register_model("unet_meteo_3d")
+def _build_unet_meteo_3d(
+    model_cfg: Dict, patch_size_lr: int, patch_size_hr: int
+) -> nn.Module:
+    """Build the 3D meteorology UNet for periodic velocity cubes."""
+    params = model_cfg.get("unet_meteo_3d", {})
+    scale = int(model_cfg.get("scale_factor", patch_size_hr // patch_size_lr))
+    return MeteorologyUNetSR3D(
+        in_channels=int(params.get("in_ch", 3)),
+        out_channels=int(params.get("out_ch", 3)),
+        scale_factor=scale,
+        feature_channels=params.get("feature_channels", [32, 64, 128, 256, 256]),
+        n_blocks_per_stage=int(params.get("n_blocks_per_stage", 2)),
+        num_latent_layers=int(params.get("num_latent_layers", 2)),
+        pre_upsample_mode=params.get("pre_upsample_mode", "trilinear"),
+        normalization=params.get("norm", params.get("normalization", "batch")),
+        group_norm_groups=int(params.get("group_norm_groups", 8)),
+        residual=bool(params.get("residual", False)),
     )
 
 
