@@ -1,5 +1,9 @@
 # JHTDB-DEEP-LEARNING
 
+For the controlled 2D retraining study, timing definitions, all eight architecture
+configs and validation-only tuning workflow, see
+[the 2D study guide](docs/2d_retraining_study.md).
+
 A repository to explore and test data-driven and deep learning frameworks on fluid dynamics datasets - provided by the [Johns Hopkins Turbulence Database](https://turbulence.idies.jhu.edu/home). 
 Adapted from and built on top of the excellent [pyJHTDB](https://github.com/idies/pyJHTDB) project. This repository adds a practical workflow for fetching data from the Johns Hopkins Turbulence Database (JHTDB) and for experimenting with data-driven and machine learning models like super-resolution models on the resulting datasets. Maintained by [Aditya Sai Pranith Ayapilla](https://sites.google.com/view/adityasaipranithayapilla/home). For more information on the Johns Hopkins turbulence database, please check https://turbulence.idies.jhu.edu/database.
 

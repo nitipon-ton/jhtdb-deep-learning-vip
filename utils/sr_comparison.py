@@ -25,6 +25,7 @@ from models.factory import build_model_from_config
 from utils.metrics import ssim
 from utils.physics_losses import AdvectionLoss, DiffusionLoss
 from utils.sr_datasets import MultiFieldDataset, compute_multifield_stats, create_snapshot_splits
+from utils.training_timing import read_training_timing, timing_columns
 
 METRICS = ("mse", "mae", "psnr", "ssim", "advection_error", "diffusion_error",
            "physical_advection_mse", "physical_diffusion_mse", "inference_ms")
@@ -75,11 +76,14 @@ def prepare_runs(root, config_paths, run_dirs=None):
         saved_config = directory / "config.yaml"
         if saved_config.exists():
             saved = yaml.safe_load(saved_config.read_text(encoding="utf-8"))
-            for section in ("data", "model", "domain", "loss"):
+            for section in ("data", "model", "domain", "loss", "training"):
                 if saved.get(section) != config.get(section):
                     raise ValueError(f"{path}: {section} differs from trained run config {saved_config}")
+        checkpoint_hash = _sha256(checkpoint)
+        timing = read_training_timing(directory, name, checkpoint_hash)
         runs.append({"name": name, "config_path": str(path), "config": config,
-                     "checkpoint": str(checkpoint), "checkpoint_sha256": _sha256(checkpoint),
+                     "checkpoint": str(checkpoint), "checkpoint_sha256": checkpoint_hash,
+                     "training_timing": timing,
                      "saved_config_verified": saved_config.exists()})
     return runs
 
@@ -234,7 +238,8 @@ def evaluate(runs, dataset, metadata, device="cuda", warmup=20, example_indices=
                 payload[name] = pred.squeeze().numpy() * (sigma + 1e-8) + mu
         if len(model_rows) != 400:
             raise RuntimeError(f"{name}: did not evaluate all 400 samples")
-        aggregate = {"model": name, "num_test_samples": 400, "parameter_count": parameter_count}
+        aggregate = {"model": name, "num_test_samples": 400, "parameter_count": parameter_count,
+                     **timing_columns(run.get("training_timing"), baseline=name == "bicubic")}
         for key in METRICS:
             values = np.asarray([r[key] for r in model_rows])
             aggregate[key] = float(values.mean())
@@ -270,7 +275,11 @@ def save_results(output_dir, runs, metadata, rows, summary, examples, device, wa
                   "physical_diffusion_mse": "Denormalized omega Laplacian MSE; configured dx,dy; no viscosity factor, no clipping.",
                   "aggregation": "Arithmetic mean and population std across the same 400 samples. PSNR is mean per-image PSNR.",
                   "inference_ms": "FP32 eval/inference_mode, batch=1, synchronized forward wall time; excludes H2D/D2H transfers, IO and metrics; includes CUDA synchronization overhead.",
-                  "parameter_count": "All model parameters including frozen parameters; bicubic=0."},
+                  "parameter_count": "All model parameters including frozen parameters; bicubic=0.",
+                  "training_total_seconds": "Timed training session including validation, logging and checkpointing; excludes initial setup and later plots/test evaluation. Historical unknowns are null.",
+                  "train_seconds_per_epoch": "Mean train-only wall time per completed epoch, including loading, transfers, forward/backward and optimizer; excludes validation.",
+                  "epoch_seconds_mean": "Mean whole epoch wall time including training, validation, logging, checkpoint writes and scheduling.",
+                  "time_to_best_seconds": "Sum of whole epoch durations through the validation-selected best epoch; excludes between-epoch timing-report writes."},
               "environment": {"python": platform.python_version(), "torch": torch.__version__,
                               "numpy": np.__version__, "device": str(device),
                               "device_name": torch.cuda.get_device_name(torch.device(device)) if torch.device(device).type == "cuda" else platform.processor(),
@@ -286,6 +295,19 @@ def save_results(output_dir, runs, metadata, rows, summary, examples, device, wa
     fig.tight_layout()
     fig.savefig(output_dir / "metric_comparison.png", dpi=160)
     plt.close(fig)
+    timed = [s for s in summary if s.get("timing_status") == "recorded"]
+    if timed:
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        for ax, key, title, divisor in zip(
+                axes, ("training_total_seconds", "train_seconds_per_epoch", "time_to_best_seconds"),
+                ("Training session (hours)", "Train-only epoch (seconds)", "Time to best (hours)"),
+                (3600, 1, 3600)):
+            ax.bar(range(len(timed)), [s[key] / divisor for s in timed])
+            ax.set_xticks(range(len(timed)), [s["model"] for s in timed], rotation=30, ha="right", fontsize=8)
+            ax.set_title(title)
+        fig.tight_layout()
+        fig.savefig(output_dir / "training_cost_comparison.png", dpi=160)
+        plt.close(fig)
     fig, axes = plt.subplots(2, 3, figsize=(17, 9))
     for ax, key in zip(axes.flat, METRICS[:6]):
         for name in names:
