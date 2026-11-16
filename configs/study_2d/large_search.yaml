@@ -3,8 +3,8 @@
 # Frozen random search: 12 trials per family, 96 total. No test scoring.
 # Change BOTH tag and output_dir to create a separate search.
 search:
-  tag: large01
-  output_dir: work/SR/searches/large01
+  tag: large02_physics
+  output_dir: work/SR/searches/large02_physics
   seed: 2026
   trials_per_architecture: 12
   space:
@@ -12,8 +12,8 @@ search:
     weight_decay: [0.0, 1.0e-5, 1.0e-4]
 
 # Same corrected composite TRAINING objective as the original study.
-# Checkpoints/scheduling/early stopping now select physical-unit validation MSE
-# because the declared goal is lower MSE. Both MSE and composite loss are logged.
+# Checkpoints/scheduling/early stopping select the corrected composite validation
+# loss, including gradient/advection/diffusion. Pixel MSE is logged separately.
 training:
   seed: 42
   epochs: 300
@@ -22,7 +22,7 @@ training:
   num_workers: 0
   torch_num_threads: 4
   reject_existing_run: true
-  selection_metric: val_mse
+  selection_metric: val_loss
   optimizer: adamw
   lr: 3.0e-4
   weight_decay: 0.0
@@ -43,7 +43,7 @@ training:
     patience: 50
     min_epochs: 75
     min_delta: 0.0
-    metric: val_mse
+    metric: val_loss
     mode: min
   checkpoints:
     best: best_model.pth

@@ -113,19 +113,34 @@ def _save_weights(path, model):
     temporary.replace(path)
 
 
-def _optimizer_step(model, optimizer, scaler, samples, max_norm):
-    # Backpropagated sample sums -> exact mean over this accumulation group,
-    # including partial last batches/groups. Unscale before normalizing/clipping.
+def _optimizer_step(model, optimizer, scaler, samples, max_norm, loss_divisor=1.):
+    # Unscale first so GradScaler records inf/NaN gradients. Overflow is a
+    # recoverable skipped AMP update, not a reason to clip corrupted gradients.
+    # Let scaler.step/update do their normal skip/backoff before any clipping.
+    parameters = [p for p in model.parameters() if p.grad is not None]
+    if samples <= 0 or loss_divisor <= 0 or not parameters:
+        raise ValueError("An optimizer update needs gradients and positive sample/divisor counts.")
     if scaler.is_enabled():
         scaler.unscale_(optimizer)
-    for p in model.parameters():
-        if p.grad is not None:
-            p.grad.div_(samples)
+    finite = torch.stack([torch.isfinite(p.grad).all() for p in parameters]).all().item()
+    if not finite:
+        if not scaler.is_enabled():
+            raise FloatingPointError("Non-finite gradients in full precision; optimizer was not updated.")
+        previous_scale = scaler.get_scale()
+        scaler.step(optimizer)  # unscale_ already detected overflow: this skips optimizer.step()
+        scaler.update()
+        optimizer.zero_grad(set_to_none=True)
+        print(f"AMP overflow: skipped optimizer update; scale {previous_scale:g} -> {scaler.get_scale():g}", flush=True)
+        return False
+    # Exact sample mean, including the partial last accumulation group.
+    for p in parameters:
+        p.grad.mul_(loss_divisor / samples)
     if max_norm is not None:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm, error_if_nonfinite=True)
+        torch.nn.utils.clip_grad_norm_(parameters, max_norm, error_if_nonfinite=True)
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad(set_to_none=True)
+    return True
 
 
 def run_epoch(model, loader, criterion, device, *, optimizer=None, scaler=None,
@@ -134,6 +149,10 @@ def run_epoch(model, loader, criterion, device, *, optimizer=None, scaler=None,
     model.train(training)
     totals, samples = {}, 0
     pending_samples = pending_batches = 0
+    updates = skipped_updates = consecutive_overflows = 0
+    # Keep scaled gradients at approximately the effective-batch MEAN magnitude.
+    # Backpropagating sample sums needlessly amplified FP16 overflow by batch size.
+    loss_divisor = float((loader.batch_size or 1) * accumulation)
     if training:
         optimizer.zero_grad(set_to_none=True)
     with torch.enable_grad() if training else torch.inference_mode():
@@ -151,18 +170,28 @@ def run_epoch(model, loader, criterion, device, *, optimizer=None, scaler=None,
                 raise FloatingPointError("Non-finite loss.")
             count = inputs.size(0)
             if training:
-                scaler.scale(components["loss"] * count).backward()
+                scaler.scale(components["loss"] * (count / loss_divisor)).backward()
                 pending_samples += count
                 pending_batches += 1
                 if pending_batches == accumulation or index + 1 == len(loader):
-                    _optimizer_step(model, optimizer, scaler, pending_samples, max_norm)
+                    applied = _optimizer_step(model, optimizer, scaler, pending_samples, max_norm, loss_divisor)
+                    updates += int(applied)
+                    skipped_updates += int(not applied)
+                    consecutive_overflows = 0 if applied else consecutive_overflows + 1
+                    if consecutive_overflows >= 32:
+                        raise FloatingPointError("32 consecutive AMP overflows; trial failed rather than reporting untrained results.")
                     pending_samples = pending_batches = 0
             for key, value in components.items():
                 totals[key] = totals.get(key, 0.) + value.detach().item() * count
             samples += count
     if not samples:
         raise ValueError("Empty training/validation loader.")
-    return {**{key: value / samples for key, value in totals.items()}, "samples": samples}
+    if training and not updates:
+        raise FloatingPointError("No optimizer updates succeeded this epoch; no valid training result.")
+    result = {**{key: value / samples for key, value in totals.items()}, "samples": samples}
+    if training:
+        result.update(optimizer_updates=updates, amp_skipped_updates=skipped_updates)
+    return result
 
 
 def train(config, root=ROOT):

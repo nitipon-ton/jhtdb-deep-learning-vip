@@ -15,7 +15,7 @@ import yaml
 
 from utils.experiment_batch import (completed_result, preflight_configs, prepare_search,
                                     save_batch_reports)
-from utils.training_2d import CorrectedLoss, load_train_validation, run_epoch, train
+from utils.training_2d import CorrectedLoss, _optimizer_step, load_train_validation, run_epoch, train
 from torch.utils.data import DataLoader
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +57,7 @@ class PlanningTests(unittest.TestCase):
             self.assertEqual(len(manifest["trials"]), 96)
             self.assertEqual(len({r["run_name"] for r in manifest["trials"]}), 96)
             trials, metric = preflight_configs([t["config_path"] for t in manifest["trials"]])
-            self.assertEqual(metric, "val_mse")
+            self.assertEqual(metric, "val_loss")
             self.assertEqual(len(trials), 96)
             self.assertFalse(manifest["test_evaluated"])
             self.assertEqual(prepare_search(path)[1], manifest)
@@ -115,6 +115,37 @@ class PlanningTests(unittest.TestCase):
 
 
 class TrainingTests(unittest.TestCase):
+    def test_amp_overflow_skips_clipping_and_update_then_recovers(self):
+        model = torch.nn.Linear(1, 1, bias=False)
+        optimizer = torch.optim.SGD(model.parameters(), lr=.1)
+        # Real GradScaler on CPU; inject inf to reproduce the gradient state
+        # found after FP16 backward overflow without requiring CUDA.
+        scaler = torch.amp.GradScaler("cpu", init_scale=65536.)
+        scaler.scale(model(torch.ones(1, 1)).sum()).backward()
+        model.weight.grad.fill_(float("inf"))
+        original = model.weight.detach().clone()
+        with patch("torch.nn.utils.clip_grad_norm_") as clip:
+            applied = _optimizer_step(model, optimizer, scaler, 1, 1.)
+            clip.assert_not_called()
+        self.assertFalse(applied)
+        self.assertEqual(scaler.get_scale(), 32768.)
+        torch.testing.assert_close(model.weight, original)
+        self.assertIsNone(model.weight.grad)
+        scaler.scale(model(torch.ones(1, 1)).sum()).backward()
+        self.assertTrue(_optimizer_step(model, optimizer, scaler, 1, 1.))
+        self.assertFalse(torch.equal(model.weight, original))
+
+    def test_full_precision_nonfinite_gradients_still_fail(self):
+        model = torch.nn.Linear(1, 1, bias=False)
+        optimizer = torch.optim.SGD(model.parameters(), lr=.1)
+        scaler = torch.amp.GradScaler("cpu", enabled=False)
+        model(torch.ones(1, 1)).sum().backward()
+        model.weight.grad.fill_(float("nan"))
+        original = model.weight.detach().clone()
+        with self.assertRaisesRegex(FloatingPointError, "full precision"):
+            _optimizer_step(model, optimizer, scaler, 1, None)
+        torch.testing.assert_close(model.weight, original)
+
     def test_actual_training_never_reads_test_and_completed_runs_are_verifiable(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -142,6 +173,16 @@ class TrainingTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 train(cfg, root)
 
+    def test_epoch_with_no_successful_updates_cannot_be_reported_as_trained(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cfg = fixture(root)
+            with patch("utils.training_2d._optimizer_step", return_value=False):
+                with self.assertRaisesRegex(FloatingPointError, "No optimizer updates"):
+                    train(cfg, root)
+            timing = json.loads((root / "work/SR/synthetic_batch/metrics/training_timing.json").read_text())
+            self.assertFalse(timing["completed"])
+
     def test_checkpoint_selection_uses_mse_when_composite_loss_disagrees(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -155,6 +196,23 @@ class TrainingTests(unittest.TestCase):
                 summary = train(cfg, root)
             self.assertEqual(summary["best_epoch"], 2)
             self.assertEqual(summary["best_val_loss"], .2)
+
+    def test_composite_selection_keeps_physics_better_epoch_when_pixel_mse_improves(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cfg = fixture(root)
+            cfg["training"]["selection_metric"] = "val_loss"
+            cfg["training"]["early_stopping"]["metric"] = "val_loss"
+            def metrics(loss, pixel, samples):
+                return {"loss": loss, "pixel": pixel, "gradient": 0.,
+                        "advection": 0., "diffusion": 0., "samples": samples}
+            phases = [metrics(.4, .3, 3), metrics(.3, .2, 2),
+                      metrics(.4, .2, 3), metrics(.4, .1, 2)]
+            with patch("utils.training_2d.run_epoch", side_effect=phases):
+                summary = train(cfg, root)
+            self.assertEqual(summary["selection_metric"], "val_loss")
+            self.assertEqual(summary["best_epoch"], 1)
+            self.assertEqual(summary["best_selection_value"], .3)
 
     def test_accumulation_matches_equivalent_batches_with_partial_last_group(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -63,14 +63,17 @@ other settings. Equal trial count is not equal compute cost.
   accumulation does not reproduce BatchNorm statistics from a batch of 32.
 
 The corrected composite **training** loss, normalization, dataset, and split
-remain fixed. Because this round explicitly targets MSE, the declared
-`training.selection_metric` is now **`val_mse`**: physical-unit validation
-omega_z MSE. Checkpoint selection, scheduling and early stopping all use that
-metric. Composite validation loss is logged too. These checkpoints are selected
-differently from the first sweep's minimum composite-loss checkpoints; disclose
-that change. To run a separate composite-selected experiment, choose a new tag
-and output directory and set `selection_metric: val_loss` (and early stopping
-metric consistently) before generating its candidates.
+remain fixed. The default `training.selection_metric` is **`val_loss`**:
+normalized pixel MSE + 0.1 gradient error + 0.1 advection error + 0.1 diffusion
+error. Checkpoint selection, scheduling and early stopping all use this composite
+validation loss, so physics affects both learning and selection, just as in the
+first 48-run sweep. Physical-unit validation pixel MSE is logged separately.
+
+This plan uses the new tag/output folder `large02_physics`. Preserve any earlier
+`large01` runs: those used pixel-only validation MSE for selection, although their
+training objective also included physics. Do not edit their frozen generated
+configs or relabel their checkpoints as composite-selected. If that old batch is
+still running, stop it with Ctrl+C before starting this new batch on the same GPU.
 
 Larger networks and a broader finite search do not guarantee test MSE below
 50. Validation MSE and test MSE are different measurements. The existing test
@@ -84,7 +87,7 @@ this initial search holds training seed 42 fixed rather than searching seeds.
 Each run is saved separately:
 
 ```text
-work/SR/study2d_large01_<architecture>_tNNN_s42/
+work/SR/study2d_large02_physics_<architecture>_tNNN_s42/
   config.yaml
   checkpoints/best_model.pth
   checkpoints/last_model.pth
@@ -100,7 +103,7 @@ work/SR/study2d_large01_<architecture>_tNNN_s42/
 Batch-level files:
 
 ```text
-work/SR/searches/large01/
+work/SR/searches/large02_physics/
   manifest.json                  # frozen plan and candidate config hashes
   configs/*.yaml                 # exact configs to use for final comparison
   logs/*.log                     # complete stdout/stderr for each attempt
@@ -125,6 +128,20 @@ historical notebook weights. Validation loops use the same precision setting
 as training; final inference comparisons remain FP32 as before.
 
 ## Restart, errors and memory
+
+Mixed-precision overflow handling: if backward produces inf/NaN gradients,
+GradScaler skips that update and reduces its loss scale before trying the next
+group. Corrupted gradients are never clipped or applied. Finite gradients retain
+strict clipping checks, and non-finite full-precision gradients still fail.
+`train_optimizer_updates` and `train_amp_skipped_updates` are logged per epoch.
+An epoch with no successful updates or 32 consecutive overflows fails the trial,
+rather than reporting an untrained model as a valid candidate. The loss is scaled
+as an effective-batch mean before backward to avoid unnecessarily amplifying FP16
+gradients by the microbatch size; partial groups still use exact sample weighting.
+
+This is a correction to the original headless AMP implementation, whose strict
+clipping check could abort before GradScaler handled recoverable overflow. Upload
+the updated `utils/training_2d.py` before launching the physics-balanced search.
 
 Re-run the same command to skip verified completed experiments and continue
 pending ones. This is **experiment-level restart, not epoch-level resume**.
@@ -172,7 +189,7 @@ comparison notebook's settings cell (set your actual PACE absolute path):
 
 ```python
 import json
-selected_path = Path('/absolute/project/path/work/SR/searches/large01/selected_configs.json')
+selected_path = Path('/absolute/project/path/work/SR/searches/large02_physics/selected_configs.json')
 selected = json.loads(selected_path.read_text())
 assert not selected['provisional'], 'Finish all planned trials first.'
 CONFIG_PATHS = selected['CONFIG_PATHS']
