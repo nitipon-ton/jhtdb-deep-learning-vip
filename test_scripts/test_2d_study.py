@@ -94,7 +94,8 @@ class StudyConfigTests(unittest.TestCase):
         for node in ast.walk(registry):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "register_model":
                 registered.add(node.args[0].value)
-        configs = [yaml.safe_load(p.read_text()) for p in (ROOT / "configs/study_2d").glob("*.yaml")]
+        configs = [cfg for p in (ROOT / "configs/study_2d").glob("*.yaml")
+                   if "model" in (cfg := yaml.safe_load(p.read_text()))]
         self.assertEqual({c["model"]["architecture"] for c in configs}, registered - {"unet_meteo_3d"})
         reference = yaml.safe_load((ROOT / "configs/vip_unet_corrected_physics_128.yaml").read_text())
         names = []
@@ -137,6 +138,8 @@ class ModelSmokeTests(unittest.TestCase):
         try:
             for path in sorted((ROOT / "configs/study_2d").glob("*.yaml")):
                 cfg = yaml.safe_load(path.read_text())
+                if "model" not in cfg:  # search plans are not individual model configs
+                    continue
                 for model_cfg in capacity_models(cfg):
                     with self.subTest(architecture=model_cfg["architecture"], model=model_cfg):
                         model = build_model_from_config(copy.deepcopy(model_cfg), 32, 128).train()

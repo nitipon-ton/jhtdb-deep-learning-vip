@@ -45,6 +45,7 @@ class ComparisonTests(unittest.TestCase):
         target = torch.randn(1, 1, 128, 128)
         u = torch.ones(1, 128, 128)
         identical = sample_metrics(target, target, u, u, self.metadata)
+        self.assertTrue(np.isfinite(identical["psnr"]))
         for key in ("mse", "mae", "advection_error", "diffusion_error",
                     "physical_advection_mse", "physical_diffusion_mse"):
             self.assertEqual(identical[key], 0.)

@@ -146,7 +146,8 @@ def sample_metrics(pred, target, u, v, metadata):
     mse = error.square().mean().item()
     dynamic_range = metadata["data_range"]
     # Identical reconstruction convention: cap at float64 tiny to retain valid JSON.
-    psnr = 10 * np.log10(dynamic_range**2 / max(mse, np.finfo(np.float64).tiny))
+    # Subtract logarithms so a perfect reconstruction cannot overflow before log10.
+    psnr = 20 * np.log10(dynamic_range) - 10 * np.log10(max(mse, np.finfo(np.float64).tiny))
     pu = u.double() * (stats["ux"][1] + 1e-8) + stats["ux"][0]
     pv = v.double() * (stats["uy"][1] + 1e-8) + stats["uy"][0]
     pa, pd = physical_terms(p, pu, pv, metadata["dx"], metadata["dy"])
@@ -264,7 +265,7 @@ def save_results(output_dir, runs, metadata, rows, summary, examples, device, wa
     except (OSError, subprocess.CalledProcessError):
         revision = None
     report = {"created_utc": datetime.now(timezone.utc).isoformat(), "git_revision": revision,
-              "selection_policy": "Configs fixed before testing; best_model.pth selected by validation loss only. Test is reporting only.",
+              "selection_policy": "Configs fixed before testing; best_model.pth selected by each run's declared validation metric (training.selection_metric, default val_loss). Test is reporting only.",
               "metric_definitions": {
                   "mse_mae": "Denormalized omega_z; mean over all 128x128 pixels per sample.",
                   "psnr": "10 log10(training omega_z range squared / per-sample MSE); perfect match uses float64 tiny floor.",

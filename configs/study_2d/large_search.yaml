@@ -1,0 +1,151 @@
+# One command on PACE:
+# python scripts/run_2d_experiments.py --plan configs/study_2d/large_search.yaml
+# Frozen random search: 12 trials per family, 96 total. No test scoring.
+# Change BOTH tag and output_dir to create a separate search.
+search:
+  tag: large01
+  output_dir: work/SR/searches/large01
+  seed: 2026
+  trials_per_architecture: 12
+  space:
+    lr: [1.0e-4, 3.0e-4, 6.0e-4, 1.0e-3]
+    weight_decay: [0.0, 1.0e-5, 1.0e-4]
+
+# Same corrected composite TRAINING objective as the original study.
+# Checkpoints/scheduling/early stopping now select physical-unit validation MSE
+# because the declared goal is lower MSE. Both MSE and composite loss are logged.
+training:
+  seed: 42
+  epochs: 300
+  batch_size: 16
+  grad_accum_steps: 2          # effective batch 32, except final partial group
+  num_workers: 0
+  torch_num_threads: 4
+  reject_existing_run: true
+  selection_metric: val_mse
+  optimizer: adamw
+  lr: 3.0e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  mixed_precision: true
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+  lr_scheduler:
+    enabled: true
+    type: plateau
+    factor: 0.5
+    patience: 8
+    threshold: 1.0e-5
+    min_lr: 1.0e-6
+  early_stopping:
+    enabled: true
+    patience: 50
+    min_epochs: 75
+    min_delta: 0.0
+    metric: val_mse
+    mode: min
+  checkpoints:
+    best: best_model.pth
+    last: last_model.pth
+  gan:
+    enabled: false
+
+models:
+  unet_meteo:
+    base_config: configs/study_2d/unet_meteo.yaml
+    capacities:
+      - feature_channels: [32, 64, 128, 256, 256]
+        n_blocks_per_stage: 3
+        num_latent_layers: 3
+      - feature_channels: [48, 96, 192, 384, 384]
+        n_blocks_per_stage: 3
+        num_latent_layers: 3
+      - feature_channels: [64, 128, 256, 512, 512]
+        n_blocks_per_stage: 2
+        num_latent_layers: 3
+    options:
+      pre_upsample_mode: [bilinear, bicubic]
+  unet:
+    base_config: configs/study_2d/unet.yaml
+    capacities:
+      - base_ch: 48
+      - base_ch: 64
+      - base_ch: 96
+  edsr:
+    base_config: configs/study_2d/edsr.yaml
+    capacities:
+      - n_feats: 64
+        n_resblocks: 24
+      - n_feats: 96
+        n_resblocks: 24
+      - n_feats: 128
+        n_resblocks: 32
+    options:
+      res_scale: [0.1, 1.0]
+  hdsc_ms:
+    base_config: configs/study_2d/hdsc_ms.yaml
+    capacities:
+      - dsc_width: 48
+        ms_mid: 24
+        ms_small: 12
+        ms_out: 4
+      - dsc_width: 64
+        ms_mid: 32
+        ms_small: 16
+        ms_out: 6
+      - dsc_width: 96
+        ms_mid: 48
+        ms_small: 24
+        ms_out: 8
+    options:
+      upsample_mode: [bilinear, bicubic]
+  swinir:
+    base_config: configs/study_2d/swinir.yaml
+    capacities:
+      - embed_dim: 64
+        depths: 8
+        num_heads: 4
+      - embed_dim: 96
+        depths: 12
+        num_heads: 6
+      - embed_dim: 128
+        depths: 12
+        num_heads: 8
+    options:
+      mlp_ratio: [2.0, 4.0]
+  esrgan:
+    # RRDB generator only, not adversarial training.
+    base_config: configs/study_2d/esrgan.yaml
+    capacities:
+      - nf: 64
+        gc: 32
+        num_blocks: 16
+      - nf: 96
+        gc: 32
+        num_blocks: 16
+      - nf: 64
+        gc: 32
+        num_blocks: 23
+  residual_cnn:
+    base_config: configs/study_2d/residual_cnn.yaml
+    capacities:
+      - hidden_channels: 64
+        num_residual_blocks: 8
+      - hidden_channels: 96
+        num_residual_blocks: 12
+      - hidden_channels: 128
+        num_residual_blocks: 12
+    options:
+      normalization: [batch, group, instance, none]
+      dropout_rate: [0.0, 0.05]
+      dilation: [1, 2]
+  mlp:
+    # Same direct-output MLP architecture; no residual shortcut is silently added.
+    base_config: configs/study_2d/mlp.yaml
+    capacities:
+      - hidden_dims: [1024, 2048, 1024]
+      - hidden_dims: [2048, 2048, 2048]
+      - hidden_dims: [2048, 4096, 2048]
+    options:
+      dropout_p: [0.0, 0.05, 0.1]
