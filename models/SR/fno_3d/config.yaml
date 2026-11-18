@@ -1,0 +1,48 @@
+# Standalone 3D FNO: same input/target semantics as the repository's 3D U-Net.
+experiment:
+  run_name: fno3d_baseline
+  output_dir: runs
+
+data:
+  processed_dir: null  # REQUIRED: absolute path to superresolution-nn/data/processed/cnn
+  splits: {train: train, val: val, test: test}
+  scale: 1.0          # Common factor for input AND residual target; 1.0 for parity
+  train_patch_size: null  # null = full cube, e.g., 128^3. Try 64 when OOM.
+  augmentation: false
+
+model:
+  in_channels: 3
+  out_channels: 3
+  width: 16             # feature channels
+  modes: [8, 8, 8]      # retained Fourier modes on (Z,Y,X)
+  depth: 3              # number of hybrid spectral/convolution blocks
+  local_kernel: 3
+  local_path: true
+  residual_blocks: true
+  coordinates: false    # often sensible for homogeneous periodic turbulence
+  zero_init_head: true  # initial prediction is zero correction (interpolated baseline)
+
+training:
+  seed: 42
+  epochs: 100
+  batch_size: 1
+  num_workers: 0
+  lr: 0.0005
+  weight_decay: 0.0
+  grad_accum_steps: 1
+  grad_clip: 1.0
+  amp: false            # enable on CUDA once baseline training works
+  early_stopping_patience: 20
+  scheduler: cosine     # cosine | none
+  min_lr: 0.000001
+
+loss:
+  pixel_weight: 1.0
+  gradient_weight: 0.1
+  spectral_weight: 0.0    # optional; adds expensive 3D FFT operations
+  divergence_weight: 0.0  # optional; requires meaningful periodic boundaries
+  periodic: true
+  spacing: [1.0, 1.0, 1.0] # dz, dy, dx; update for physical divergence loss
+
+hardware:
+  device: auto          # auto | cuda | cpu | mps

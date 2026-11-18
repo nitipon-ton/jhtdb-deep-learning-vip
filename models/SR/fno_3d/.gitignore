@@ -1,0 +1,5 @@
+runs/
+synthetic_data/
+.venv/
+__pycache__/
+*.pyc
